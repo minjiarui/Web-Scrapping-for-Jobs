@@ -1,0 +1,42 @@
+name: Daily BA Job Alert
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Run job alert script
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEARCH_QUERY: 'business analyst'
+          SEARCH_COUNTRY: 'sg'
+        run: python scripts/job_alert.py
+
+      - name: Commit updated seen_jobs.json
+        run: |
+          git config user.name "job-alert-bot"
+          git config user.email "actions@github.com"
+          git add data/seen_jobs.json
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update seen jobs list [skip ci]"
+          git push
