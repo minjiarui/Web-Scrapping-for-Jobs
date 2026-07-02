@@ -69,8 +69,9 @@ def load_seen_jobs() -> set:
 def save_seen_jobs(seen_ids: set):
     SEEN_JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SEEN_JOBS_FILE, "w") as f:
-        # Keep the file from growing forever - cap at the most recent 500 IDs
-        json.dump(list(seen_ids)[-500:], f, indent=2)
+        # Sort for a deterministic, stable file (avoids spurious git diffs between
+        # runs caused by Python's randomized set ordering) and cap growth at 500 IDs.
+        json.dump(sorted(seen_ids)[-500:], f, indent=2)
 
 
 def fetch_jobs() -> list:
@@ -111,7 +112,8 @@ def format_job_message(job: dict) -> str:
     )
 
 
-def send_telegram_message(text: str):
+def send_telegram_message(text: str) -> bool:
+    """Returns True if the message was sent successfully, False otherwise."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -122,6 +124,8 @@ def send_telegram_message(text: str):
     resp = requests.post(url, data=payload, timeout=15)
     if not resp.ok:
         print(f"WARNING: Telegram send failed ({resp.status_code}): {resp.text}")
+        return False
+    return True
 
 
 def main():
@@ -142,10 +146,16 @@ def main():
     if len(new_jobs) > 1:
         send_telegram_message(f"🔔 {len(new_jobs)} new Business Analyst job(s) found today:")
 
+    sent_count = 0
     for job in new_jobs:
-        send_telegram_message(format_job_message(job))
-        seen_ids.add(str(job.get("id")))
+        # Only mark a job as "seen" if the message actually sent successfully.
+        # This way, if Telegram delivery fails (e.g. bad chat ID, network issue),
+        # the job will be retried on the next run instead of being silently lost.
+        if send_telegram_message(format_job_message(job)):
+            seen_ids.add(str(job.get("id")))
+            sent_count += 1
 
+    print(f"Successfully sent {sent_count} of {len(new_jobs)} new job(s)")
     save_seen_jobs(seen_ids)
 
 
