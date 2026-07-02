@@ -20,6 +20,7 @@ Optional environment variables:
     MAX_JOB_AGE_DAYS  - only consider jobs posted in the last N days (default: 3)
 """
 
+import html
 import json
 import os
 import sys
@@ -91,9 +92,11 @@ def fetch_jobs() -> list:
 
 
 def format_job_message(job: dict) -> str:
-    title = job.get("title", "Untitled role").strip()
-    company = job.get("company", {}).get("display_name", "Unknown company")
-    location = job.get("location", {}).get("display_name", "Location not specified")
+    # HTML-escape all job-provided text fields to keep Telegram's HTML parser happy
+    # and to avoid characters like < > & breaking the message.
+    title = html.escape(job.get("title", "Untitled role").strip())
+    company = html.escape(job.get("company", {}).get("display_name", "Unknown company"))
+    location = html.escape(job.get("location", {}).get("display_name", "Location not specified"))
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
     url = job.get("redirect_url", "")
@@ -104,11 +107,11 @@ def format_job_message(job: dict) -> str:
         salary_line = f"\n💰 {salary_min:,.0f} - {salary_max:,.0f}"
 
     return (
-        f"📋 *{title}*\n"
+        f"📋 <b>{title}</b>\n"
         f"🏢 {company}\n"
         f"📍 {location}{salary_line}\n"
         f"🗓 Posted: {created}\n"
-        f"🔗 {url}"
+        f'🔗 <a href="{url}">Apply here</a>'
     )
 
 
@@ -118,7 +121,7 @@ def send_telegram_message(text: str) -> bool:
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
     resp = requests.post(url, data=payload, timeout=15)
