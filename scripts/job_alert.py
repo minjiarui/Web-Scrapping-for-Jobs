@@ -126,20 +126,52 @@ def format_job_message(job: dict) -> str:
     )
 
 
-def send_telegram_message(text: str) -> bool:
+def send_telegram_message(text: str, disable_preview: bool = False) -> bool:
     """Returns True if the message was sent successfully, False otherwise."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False,
+        "disable_web_page_preview": disable_preview,
     }
     resp = requests.post(url, data=payload, timeout=15)
     if not resp.ok:
         print(f"WARNING: Telegram send failed ({resp.status_code}): {resp.text}")
         return False
     return True
+
+
+def build_digest_chunks(new_jobs: list, max_length: int = 3500):
+    """
+    Groups job entries into digest messages. Telegram caps messages at 4096
+    characters, so this packs as many jobs as possible into each message
+    (staying under max_length as a safety buffer) instead of sending one
+    message per job.
+
+    Returns a list of (message_text, jobs_in_this_message) tuples.
+    """
+    separator = "\n\n➖➖➖➖➖➖➖➖\n\n"
+    chunks = []
+    current_text = ""
+    current_jobs = []
+
+    for job in new_jobs:
+        entry = format_job_message(job)
+        addition = (separator if current_jobs else "") + entry
+        if current_jobs and len(current_text) + len(addition) > max_length:
+            # Current chunk is full - close it out and start a new one
+            chunks.append((current_text, current_jobs))
+            current_text = entry
+            current_jobs = [job]
+        else:
+            current_text += addition
+            current_jobs.append(job)
+
+    if current_jobs:
+        chunks.append((current_text, current_jobs))
+
+    return chunks
 
 
 def main():
@@ -156,20 +188,22 @@ def main():
         # Nothing to notify about today - stay quiet, don't spam a "no jobs" message daily.
         return
 
-    # Send a header if there's more than one
-    if len(new_jobs) > 1:
-        send_telegram_message(f"🔔 {len(new_jobs)} new Business Analyst job(s) found today:")
+    chunks = build_digest_chunks(new_jobs)
+    header = f"🔔 {len(new_jobs)} new Business Analyst job(s) found today:\n\n"
 
     sent_count = 0
-    for job in new_jobs:
-        # Only mark a job as "seen" if the message actually sent successfully.
-        # This way, if Telegram delivery fails (e.g. bad chat ID, network issue),
-        # the job will be retried on the next run instead of being silently lost.
-        if send_telegram_message(format_job_message(job)):
-            seen_ids.add(str(job.get("id")))
-            sent_count += 1
+    for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
+        # Only prepend the header to the first message, and only if there's
+        # more than one job overall (keeps a single-job day looking clean).
+        text = (header if i == 0 and len(new_jobs) > 1 else "") + chunk_text
+        # Disable link previews on digest messages - with several jobs per
+        # message, a preview card for just the first link looks out of place.
+        if send_telegram_message(text, disable_preview=True):
+            for job in jobs_in_chunk:
+                seen_ids.add(str(job.get("id")))
+                sent_count += 1
 
-    print(f"Successfully sent {sent_count} of {len(new_jobs)} new job(s)")
+    print(f"Successfully sent {sent_count} of {len(new_jobs)} new job(s) in {len(chunks)} message(s)")
     save_seen_jobs(seen_ids)
 
 
