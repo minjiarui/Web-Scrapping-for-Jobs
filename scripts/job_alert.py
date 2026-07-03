@@ -2,12 +2,15 @@
 Business Analyst / Data Analyst Job Alert Bot
 ------------------------------------------------
 Fetches new job postings from the Adzuna API across multiple search terms
-(e.g. "business analyst", "data analyst") and sends any jobs it hasn't seen
-before to a Telegram chat as a digest. Each job includes a "Mark Applied"
-button that logs it to a simple applied-jobs tracker.
+(e.g. "business analyst", "data analyst"), ranks them by relevance to your
+resume/skillset, and sends any jobs it hasn't seen before to a Telegram
+chat as a digest, most-relevant-first.
 
-Designed to run once a day via GitHub Actions (see .github/workflows/daily-job-check.yml)
-but works fine run manually or via a local cron job too.
+Two ways to run:
+    python job_alert.py                  - normal daily run: fetch + notify
+    python job_alert.py --check-refresh  - lightweight mode: check Telegram
+                                            for a "/refresh" command, and if
+                                            found, run a normal check now
 
 Required environment variables (set as GitHub Secrets, see README.md):
     ADZUNA_APP_ID     - your Adzuna API app ID
@@ -25,6 +28,7 @@ Optional environment variables:
 import html
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -46,7 +50,6 @@ MAX_JOB_AGE_DAYS = int(os.environ.get("MAX_JOB_AGE_DAYS", "3"))
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
-APPLIED_JOBS_FILE = DATA_DIR / "applied_jobs.json"
 TELEGRAM_OFFSET_FILE = DATA_DIR / "telegram_offset.json"
 
 ADZUNA_URL = f"https://api.adzuna.com/v1/api/jobs/{SEARCH_COUNTRY}/search/1"
@@ -55,6 +58,24 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 QUERY_TAGS = {
     "business analyst": "📊 Business Analyst",
     "data analyst": "📈 Data Analyst",
+}
+
+# ---------- Resume-based relevance keywords ----------
+# Weighted by how strongly each skill/keyword reflects your resume.
+# Title matches count double a description match.
+RELEVANCE_KEYWORDS = {
+    # Core technical skills - highest weight
+    "python": 5, "sql": 5, "power bi": 5, "julia": 5,
+    "operations research": 5, "business analytics": 5,
+    "data analytics": 5, "data analysis": 5,
+    # Related tools / methods
+    "excel": 3, "power query": 3, "machine learning": 3,
+    "simulation": 3, "optimization": 3, "forecasting": 3,
+    "dashboard": 3, "nlp": 3, "statistics": 3, "r": 3,
+    # Domain-adjacent (finance/sales background)
+    "financial analysis": 1, "valuation": 1, "wealth management": 1,
+    "risk management": 1, "financial planning": 1, "quantitative": 1,
+    "portfolio": 1, "digital transformation": 1,
 }
 
 
@@ -95,14 +116,6 @@ def save_seen_jobs(seen_ids: set):
     save_json(SEEN_JOBS_FILE, sorted(seen_ids)[-1000:])
 
 
-def load_applied_jobs() -> dict:
-    return load_json(APPLIED_JOBS_FILE, {})
-
-
-def save_applied_jobs(applied: dict):
-    save_json(APPLIED_JOBS_FILE, applied)
-
-
 def load_telegram_offset() -> int:
     return load_json(TELEGRAM_OFFSET_FILE, {}).get("offset", 0)
 
@@ -139,6 +152,26 @@ def fetch_all_jobs() -> list:
     return list(jobs_by_id.values())
 
 
+def compute_relevance(job: dict) -> tuple:
+    """Scores a job against RELEVANCE_KEYWORDS. Title matches count double.
+    Returns (score, matched_keywords_list)."""
+    title = job.get("title", "").lower()
+    description = job.get("description", "").lower()
+
+    score = 0
+    matched = []
+    for keyword, weight in RELEVANCE_KEYWORDS.items():
+        pattern = r"\b" + re.escape(keyword) + r"\b"
+        title_hits = len(re.findall(pattern, title))
+        desc_hits = len(re.findall(pattern, description))
+        hits = title_hits * 2 + desc_hits
+        if hits:
+            score += weight * hits
+            matched.append(keyword)
+
+    return score, matched
+
+
 def format_job_message(job: dict) -> str:
     raw_title = job.get("title", "Untitled role").strip()
     raw_company = job.get("company", {}).get("display_name", "Unknown company")
@@ -157,6 +190,12 @@ def format_job_message(job: dict) -> str:
     tags = " ".join(QUERY_TAGS.get(q, q) for q in job.get("_matched_queries", []))
     tag_line = f"{tags}\n" if tags else ""
 
+    matched_keywords = job.get("_matched_keywords", [])
+    match_line = ""
+    if matched_keywords:
+        shown = ", ".join(matched_keywords[:4])
+        match_line = f"\n🎯 Matches your skills: {html.escape(shown)}"
+
     search_query = quote_plus(f"{raw_title} {raw_company} Singapore")
     google_search_url = f"https://www.google.com/search?q={search_query}"
 
@@ -164,14 +203,14 @@ def format_job_message(job: dict) -> str:
         f"{tag_line}"
         f"📋 <b>{title}</b>\n"
         f"🏢 {company}\n"
-        f"📍 {location}{salary_line}\n"
+        f"📍 {location}{salary_line}{match_line}\n"
         f"🗓 Posted: {created}\n"
         f'🔗 <a href="{url}">Apply here (Adzuna)</a>\n'
         f'🔎 <a href="{google_search_url}">Search on Google</a>'
     )
 
 
-def build_digest_chunks(new_jobs: list, max_length: int = 3200):
+def build_digest_chunks(new_jobs: list, max_length: int = 3500):
     separator = "\n\n➖➖➖➖➖➖➖➖\n\n"
     chunks = []
     current_text = ""
@@ -181,7 +220,7 @@ def build_digest_chunks(new_jobs: list, max_length: int = 3200):
         entry = format_job_message(job)
         addition = (separator if current_jobs else "") + entry
         if current_jobs and len(current_text) + len(addition) > max_length:
-            chunks.append((current_text, _build_keyboard(current_jobs), current_jobs))
+            chunks.append((current_text, current_jobs))
             current_text = entry
             current_jobs = [job]
         else:
@@ -189,24 +228,12 @@ def build_digest_chunks(new_jobs: list, max_length: int = 3200):
             current_jobs.append(job)
 
     if current_jobs:
-        chunks.append((current_text, _build_keyboard(current_jobs), current_jobs))
+        chunks.append((current_text, current_jobs))
 
     return chunks
 
 
-def _build_keyboard(jobs_in_chunk: list) -> dict:
-    rows = []
-    for job in jobs_in_chunk:
-        title = job.get("title", "role").strip()
-        short_title = (title[:28] + "…") if len(title) > 28 else title
-        rows.append([{
-            "text": f"✅ Mark Applied: {short_title}",
-            "callback_data": f"applied:{job.get('id')}",
-        }])
-    return {"inline_keyboard": rows}
-
-
-def send_telegram_message(text: str, reply_markup: dict = None, disable_preview: bool = True) -> bool:
+def send_telegram_message(text: str, disable_preview: bool = True) -> bool:
     url = f"{TELEGRAM_API}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -214,9 +241,6 @@ def send_telegram_message(text: str, reply_markup: dict = None, disable_preview:
         "parse_mode": "HTML",
         "disable_web_page_preview": disable_preview,
     }
-    if reply_markup:
-        payload["reply_markup"] = json.dumps(reply_markup)
-
     resp = requests.post(url, data=payload, timeout=15)
     if not resp.ok:
         print(f"WARNING: Telegram send failed ({resp.status_code}): {resp.text}")
@@ -239,49 +263,27 @@ def poll_telegram_updates(offset: int) -> tuple:
     return updates, new_offset
 
 
-def answer_callback_query(callback_query_id: str, text: str):
-    url = f"{TELEGRAM_API}/answerCallbackQuery"
-    payload = {"callback_query_id": callback_query_id, "text": text, "show_alert": False}
-    requests.post(url, data=payload, timeout=15)
-
-
-def process_applied_button_taps(applied: dict) -> dict:
+def check_for_refresh_command() -> bool:
+    """Polls Telegram for any new '/refresh' text message. Returns True if
+    one was found (and should trigger an immediate job check)."""
     offset = load_telegram_offset()
     updates, new_offset = poll_telegram_updates(offset)
 
-    tap_count = 0
+    found_refresh = False
     for update in updates:
-        callback = update.get("callback_query")
-        if not callback:
+        message = update.get("message")
+        if not message:
             continue
-        data = callback.get("data", "")
-        if not data.startswith("applied:"):
-            continue
-
-        job_id = data.split(":", 1)[1]
-        if job_id not in applied:
-            applied[job_id] = {
-                "applied_at": callback.get("message", {}).get("date"),
-            }
-            tap_count += 1
-            answer_callback_query(callback["id"], "✅ Marked as applied!")
-        else:
-            answer_callback_query(callback["id"], "Already marked as applied.")
-
-    if tap_count:
-        print(f"Recorded {tap_count} new 'applied' button tap(s)")
+        text = message.get("text", "").strip().lower()
+        if text in ("/refresh", "/refresh@"):  # tolerate accidental trailing '@'
+            found_refresh = True
 
     save_telegram_offset(new_offset)
-    return applied
+    return found_refresh
 
 
-def main():
-    require_env_vars()
-
-    applied = load_applied_jobs()
-    applied = process_applied_button_taps(applied)
-    save_applied_jobs(applied)
-
+def run_job_check(triggered_by_refresh: bool = False):
+    """Fetches jobs, ranks them by relevance, and sends any new ones to Telegram."""
     seen_ids = load_seen_jobs()
     jobs = fetch_all_jobs()
     print(f"Fetched {len(jobs)} unique jobs across queries: {', '.join(SEARCH_QUERIES)}")
@@ -290,21 +292,46 @@ def main():
     print(f"{len(new_jobs)} of these are new")
 
     if not new_jobs:
+        if triggered_by_refresh:
+            send_telegram_message("🔄 Refreshed - no new jobs found right now.")
         return
 
+    # Score and sort by relevance to your resume, most relevant first
+    for job in new_jobs:
+        score, matched = compute_relevance(job)
+        job["_relevance_score"] = score
+        job["_matched_keywords"] = matched
+    new_jobs.sort(key=lambda j: j["_relevance_score"], reverse=True)
+
     chunks = build_digest_chunks(new_jobs)
-    header = f"🔔 {len(new_jobs)} new job(s) found today:\n\n"
+    prefix = "🔄 Refresh: " if triggered_by_refresh else "🔔 "
+    header = f"{prefix}{len(new_jobs)} new job(s) found, ranked by relevance to your resume:\n\n"
 
     sent_count = 0
-    for i, (chunk_text, keyboard, jobs_in_chunk) in enumerate(chunks):
+    for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
         text = (header if i == 0 and len(new_jobs) > 1 else "") + chunk_text
-        if send_telegram_message(text, reply_markup=keyboard):
+        if send_telegram_message(text):
             for job in jobs_in_chunk:
                 seen_ids.add(str(job.get("id")))
                 sent_count += 1
 
     print(f"Successfully sent {sent_count} of {len(new_jobs)} new job(s) in {len(chunks)} message(s)")
     save_seen_jobs(seen_ids)
+
+
+def main():
+    require_env_vars()
+
+    if "--check-refresh" in sys.argv:
+        # Lightweight mode: only hits Adzuna if a /refresh command is pending
+        if check_for_refresh_command():
+            print("'/refresh' command detected - running job check now")
+            send_telegram_message("🔄 Refreshing job search now...")
+            run_job_check(triggered_by_refresh=True)
+        else:
+            print("No refresh command pending")
+    else:
+        run_job_check(triggered_by_refresh=False)
 
 
 if __name__ == "__main__":
