@@ -2,11 +2,12 @@ name: Daily BA Job Alert
 
 on:
   schedule:
+    # Runs at 09:00 Singapore time (UTC+8) = 01:00 UTC every day
     - cron: '0 1 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch: {}  # lets you manually trigger a run from the Actions tab, useful for testing
 
 permissions:
-  contents: write
+  contents: write  # needed so the workflow can commit the updated seen_jobs.json back to the repo
 
 jobs:
   check-jobs:
@@ -29,15 +30,15 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEARCH_QUERY: 'business analyst'
+          SEARCH_QUERIES: 'business analyst,data analyst'
           SEARCH_COUNTRY: 'sg'
         run: python scripts/job_alert.py
 
-      - name: Commit updated seen_jobs.json
+      - name: Commit updated data files
         run: |
           git config user.name "job-alert-bot"
           git config user.email "actions@github.com"
-          git add data/seen_jobs.json
-          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update seen jobs list [skip ci]"
+          git add data/
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update job tracker data [skip ci]"
           git pull --rebase origin main
           git push
