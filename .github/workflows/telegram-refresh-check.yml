@@ -1,0 +1,45 @@
+name: Telegram Refresh Check
+
+on:
+  schedule:
+    # Every 30 minutes. Kept at 30 min (not more frequent) to stay comfortably
+    # within GitHub's free Actions minutes budget for a private repo.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}  # lets you manually trigger a run from the Actions tab, useful for testing
+
+permissions:
+  contents: write
+
+jobs:
+  check-refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Check for /refresh command
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEARCH_QUERIES: 'business analyst,data analyst'
+          SEARCH_COUNTRY: 'sg'
+        run: python scripts/job_alert.py --check-refresh
+
+      - name: Commit updated data files
+        run: |
+          git config user.name "job-alert-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update job tracker data [skip ci]"
+          git pull --rebase origin main
+          git push
