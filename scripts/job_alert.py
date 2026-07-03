@@ -25,6 +25,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import requests
 
@@ -94,8 +95,10 @@ def fetch_jobs() -> list:
 def format_job_message(job: dict) -> str:
     # HTML-escape all job-provided text fields to keep Telegram's HTML parser happy
     # and to avoid characters like < > & breaking the message.
-    title = html.escape(job.get("title", "Untitled role").strip())
-    company = html.escape(job.get("company", {}).get("display_name", "Unknown company"))
+    raw_title = job.get("title", "Untitled role").strip()
+    raw_company = job.get("company", {}).get("display_name", "Unknown company")
+    title = html.escape(raw_title)
+    company = html.escape(raw_company)
     location = html.escape(job.get("location", {}).get("display_name", "Location not specified"))
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
@@ -106,12 +109,20 @@ def format_job_message(job: dict) -> str:
     if salary_min and salary_max:
         salary_line = f"\n💰 {salary_min:,.0f} - {salary_max:,.0f}"
 
+    # Adzuna's own redirect/details pages can occasionally get blocked by their
+    # CDN's bot detection. As a reliable fallback, build a plain Google search
+    # link for the job title + company - this always works since it's just a
+    # search query, not a link into Adzuna's infrastructure.
+    search_query = quote_plus(f"{raw_title} {raw_company} Singapore")
+    google_search_url = f"https://www.google.com/search?q={search_query}"
+
     return (
         f"📋 <b>{title}</b>\n"
         f"🏢 {company}\n"
         f"📍 {location}{salary_line}\n"
         f"🗓 Posted: {created}\n"
-        f'🔗 <a href="{url}">Apply here</a>'
+        f'🔗 <a href="{url}">Apply here (Adzuna)</a>\n'
+        f'🔎 <a href="{google_search_url}">Search on Google</a>'
     )
 
 
