@@ -284,7 +284,11 @@ def check_for_refresh_command() -> bool:
 
 
 def run_job_check(triggered_by_refresh: bool = False):
-    """Fetches jobs, ranks them by relevance, and sends any new ones to Telegram."""
+    """Fetches jobs, ranks them by relevance, and sends the top N most
+    relevant new ones to Telegram. Jobs outside the top N are deliberately
+    left un-marked as seen, so they get re-considered (and re-scored) on a
+    future day, in case they become more competitive once today's stronger
+    matches have already been sent."""
     seen_ids = load_seen_jobs()
     jobs = fetch_all_jobs()
     print(f"Fetched {len(jobs)} unique jobs across queries: {', '.join(SEARCH_QUERIES)}")
@@ -296,6 +300,31 @@ def run_job_check(triggered_by_refresh: bool = False):
         if triggered_by_refresh:
             send_telegram_message("🔄 Refreshed - no new jobs found right now.")
         return
+
+    # Score and sort by relevance to your resume, most relevant first
+    for job in new_jobs:
+        score, matched = compute_relevance(job)
+        job["_relevance_score"] = score
+        job["_matched_keywords"] = matched
+    new_jobs.sort(key=lambda j: j["_relevance_score"], reverse=True)
+
+    top_jobs = new_jobs[:MAX_JOBS_PER_DIGEST]
+    print(f"Sending top {len(top_jobs)} of {len(new_jobs)} new job(s) by relevance")
+
+    chunks = build_digest_chunks(top_jobs)
+    prefix = "🔄 Refresh: " if triggered_by_refresh else "🔔 "
+    header = f"{prefix}Top {len(top_jobs)} job(s) today, ranked by relevance to you:\n\n"
+
+    sent_count = 0
+    for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
+        text = (header if i == 0 and len(top_jobs) > 1 else "") + chunk_text
+        if send_telegram_message(text):
+            for job in jobs_in_chunk:
+                seen_ids.add(str(job.get("id")))
+                sent_count += 1
+
+    print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s) in {len(chunks)} message(s)")
+    save_seen_jobs(seen_ids)
 
     # Score and sort by relevance to your resume, most relevant first
     for job in new_jobs:
