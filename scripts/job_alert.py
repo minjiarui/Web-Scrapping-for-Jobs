@@ -3,14 +3,10 @@ Business Analyst / Data Analyst Job Alert Bot
 ------------------------------------------------
 Fetches new job postings from the Adzuna API across multiple search terms
 (e.g. "business analyst", "data analyst"), ranks them by relevance to your
-resume/skillset, and sends any jobs it hasn't seen before to a Telegram
-chat as a digest, most-relevant-first.
+resume/skillset, and sends the top N most relevant new ones to Telegram.
 
-Two ways to run:
-    python job_alert.py                  - normal daily run: fetch + notify
-    python job_alert.py --check-refresh  - lightweight mode: check Telegram
-                                            for a "/refresh" command, and if
-                                            found, run a normal check now
+Runs either on a daily schedule, or instantly when triggered by a Cloudflare
+Worker reacting to a "/refresh" message in Telegram (see README.md).
 
 Required environment variables (set as GitHub Secrets, see README.md):
     ADZUNA_APP_ID     - your Adzuna API app ID
@@ -23,6 +19,8 @@ Optional environment variables:
     SEARCH_COUNTRY    - Adzuna country code (default: "sg" for Singapore)
     RESULTS_PER_PAGE  - how many jobs to pull per search term per run (default: 20)
     MAX_JOB_AGE_DAYS  - only consider jobs posted in the last N days (default: 3)
+    MAX_JOBS_PER_DIGEST - how many top-ranked jobs to send per run (default: 10)
+    TRIGGERED_BY      - set to "refresh" when triggered on-demand, for message wording
 """
 
 import html
@@ -51,7 +49,6 @@ MAX_JOBS_PER_DIGEST = int(os.environ.get("MAX_JOBS_PER_DIGEST", "10"))
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
-TELEGRAM_OFFSET_FILE = DATA_DIR / "telegram_offset.json"
 
 ADZUNA_URL = f"https://api.adzuna.com/v1/api/jobs/{SEARCH_COUNTRY}/search/1"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -61,18 +58,24 @@ QUERY_TAGS = {
     "data analyst": "📈 Data Analyst",
 }
 
-# ---------- Resume-based relevance keywords ----------
-# Weighted by how strongly each skill/keyword reflects your resume.
-# Title matches count double a description match.
+# ---------- Resume + LinkedIn-based relevance keywords ----------
+# Weighted by how strongly each skill/keyword reflects your resume and
+# LinkedIn profile. Title matches count double a description match.
 RELEVANCE_KEYWORDS = {
     # Core technical skills - highest weight
     "python": 5, "sql": 5, "power bi": 5, "julia": 5,
     "operations research": 5, "business analytics": 5,
     "data analytics": 5, "data analysis": 5,
+    # Explicitly stated target areas (from LinkedIn summary: "actively
+    # seeking internship roles in data analytics, automation, or
+    # quantitative finance")
+    "automation": 5, "quantitative finance": 5,
+    # You're specifically looking for internships right now
+    "internship": 4, "intern": 4,
     # Related tools / methods
     "excel": 3, "power query": 3, "machine learning": 3,
     "simulation": 3, "optimization": 3, "forecasting": 3,
-    "dashboard": 3, "nlp": 3, "statistics": 3, "r": 3,
+    "dashboard": 3, "nlp": 3, "statistics": 3, "r": 3, "quant": 2,
     # Domain-adjacent (finance/sales background)
     "financial analysis": 1, "valuation": 1, "wealth management": 1,
     "risk management": 1, "financial planning": 1, "quantitative": 1,
@@ -115,14 +118,6 @@ def load_seen_jobs() -> set:
 
 def save_seen_jobs(seen_ids: set):
     save_json(SEEN_JOBS_FILE, sorted(seen_ids)[-1000:])
-
-
-def load_telegram_offset() -> int:
-    return load_json(TELEGRAM_OFFSET_FILE, {}).get("offset", 0)
-
-
-def save_telegram_offset(offset: int):
-    save_json(TELEGRAM_OFFSET_FILE, {"offset": offset})
 
 
 def fetch_jobs_for_query(query: str) -> list:
@@ -249,40 +244,6 @@ def send_telegram_message(text: str, disable_preview: bool = True) -> bool:
     return True
 
 
-def poll_telegram_updates(offset: int) -> tuple:
-    url = f"{TELEGRAM_API}/getUpdates"
-    params = {"offset": offset, "timeout": 0}
-    resp = requests.get(url, params=params, timeout=15)
-    if not resp.ok:
-        print(f"WARNING: Failed to poll Telegram updates ({resp.status_code}): {resp.text}")
-        return [], offset
-
-    updates = resp.json().get("result", [])
-    new_offset = offset
-    for update in updates:
-        new_offset = max(new_offset, update.get("update_id", 0) + 1)
-    return updates, new_offset
-
-
-def check_for_refresh_command() -> bool:
-    """Polls Telegram for any new '/refresh' text message. Returns True if
-    one was found (and should trigger an immediate job check)."""
-    offset = load_telegram_offset()
-    updates, new_offset = poll_telegram_updates(offset)
-
-    found_refresh = False
-    for update in updates:
-        message = update.get("message")
-        if not message:
-            continue
-        text = message.get("text", "").strip().lower()
-        if text in ("/refresh", "/refresh@"):  # tolerate accidental trailing '@'
-            found_refresh = True
-
-    save_telegram_offset(new_offset)
-    return found_refresh
-
-
 def run_job_check(triggered_by_refresh: bool = False):
     """Fetches jobs, ranks them by relevance, and sends the top N most
     relevant new ones to Telegram. Jobs outside the top N are deliberately
@@ -326,42 +287,15 @@ def run_job_check(triggered_by_refresh: bool = False):
     print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s) in {len(chunks)} message(s)")
     save_seen_jobs(seen_ids)
 
-    # Score and sort by relevance to your resume, most relevant first
-    for job in new_jobs:
-        score, matched = compute_relevance(job)
-        job["_relevance_score"] = score
-        job["_matched_keywords"] = matched
-    new_jobs.sort(key=lambda j: j["_relevance_score"], reverse=True)
-
-    chunks = build_digest_chunks(new_jobs)
-    prefix = "🔄 Refresh: " if triggered_by_refresh else "🔔 "
-    header = f"{prefix}{len(new_jobs)} new job(s) found, ranked by relevance to your resume:\n\n"
-
-    sent_count = 0
-    for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
-        text = (header if i == 0 and len(new_jobs) > 1 else "") + chunk_text
-        if send_telegram_message(text):
-            for job in jobs_in_chunk:
-                seen_ids.add(str(job.get("id")))
-                sent_count += 1
-
-    print(f"Successfully sent {sent_count} of {len(new_jobs)} new job(s) in {len(chunks)} message(s)")
-    save_seen_jobs(seen_ids)
-
 
 def main():
     require_env_vars()
 
-    if "--check-refresh" in sys.argv:
-        # Lightweight mode: only hits Adzuna if a /refresh command is pending
-        if check_for_refresh_command():
-            print("'/refresh' command detected - running job check now")
-            send_telegram_message("🔄 Refreshing job search now...")
-            run_job_check(triggered_by_refresh=True)
-        else:
-            print("No refresh command pending")
-    else:
-        run_job_check(triggered_by_refresh=False)
+    triggered_by_refresh = os.environ.get("TRIGGERED_BY", "").strip().lower() == "refresh"
+    if triggered_by_refresh:
+        print("Triggered instantly via /refresh")
+        send_telegram_message("🔄 Refreshing job search now...")
+    run_job_check(triggered_by_refresh=triggered_by_refresh)
 
 
 if __name__ == "__main__":
