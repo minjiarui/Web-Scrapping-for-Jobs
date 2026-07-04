@@ -3,7 +3,7 @@ name: Daily BA Job Alert
 on:
   schedule:
     # Runs at 09:00 Singapore time (UTC+8) = 01:00 UTC every day
-    - cron: '0 1 * * *'
+    - cron: '7 1 * * *'
   workflow_dispatch: {}  # lets you manually trigger a run from the Actions tab, useful for testing
 
 permissions:
