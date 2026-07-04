@@ -23,6 +23,7 @@ Optional environment variables:
     SEARCH_COUNTRY    - Adzuna country code (default: "sg" for Singapore)
     RESULTS_PER_PAGE  - how many jobs to pull per search term per run (default: 20)
     MAX_JOB_AGE_DAYS  - only consider jobs posted in the last N days (default: 3)
+    MAX_JOBS_PER_DIGEST = int(os.environ.get("MAX_JOBS_PER_DIGEST", "10"))
 """
 
 import html
