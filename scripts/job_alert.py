@@ -23,7 +23,6 @@ Optional environment variables:
     SEARCH_COUNTRY    - Adzuna country code (default: "sg" for Singapore)
     RESULTS_PER_PAGE  - how many jobs to pull per search term per run (default: 20)
     MAX_JOB_AGE_DAYS  - only consider jobs posted in the last N days (default: 3)
-    MAX_JOBS_PER_DIGEST = int(os.environ.get("MAX_JOBS_PER_DIGEST", "10"))
 """
 
 import html
@@ -48,6 +47,7 @@ SEARCH_QUERIES = [
 SEARCH_COUNTRY = os.environ.get("SEARCH_COUNTRY", "sg")
 RESULTS_PER_PAGE = int(os.environ.get("RESULTS_PER_PAGE", "20"))
 MAX_JOB_AGE_DAYS = int(os.environ.get("MAX_JOB_AGE_DAYS", "3"))
+MAX_JOBS_PER_DIGEST = int(os.environ.get("MAX_JOBS_PER_DIGEST", "10"))
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
