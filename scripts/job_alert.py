@@ -26,6 +26,9 @@ Optional environment variables:
     RESULTS_PER_PAGE  - how many jobs to pull per search term per run (default: 20)
     MAX_JOB_AGE_DAYS  - only consider jobs posted in the last N days (default: 3)
     MAX_JOBS_PER_DIGEST - how many top-ranked jobs to send per run (default: 10)
+    MAX_EXPERIENCE_YEARS - filter out jobs requiring more than this many years
+                           of experience (default: 0, i.e. entry-level/fresh-
+                           grad/internship roles only)
     TRIGGERED_BY      - set to "refresh" when triggered on-demand, for message wording
 """
 
@@ -53,6 +56,7 @@ SEARCH_COUNTRY = os.environ.get("SEARCH_COUNTRY", "sg")
 RESULTS_PER_PAGE = int(os.environ.get("RESULTS_PER_PAGE", "20"))
 MAX_JOB_AGE_DAYS = int(os.environ.get("MAX_JOB_AGE_DAYS", "3"))
 MAX_JOBS_PER_DIGEST = int(os.environ.get("MAX_JOBS_PER_DIGEST", "10"))
+MAX_EXPERIENCE_YEARS = int(os.environ.get("MAX_EXPERIENCE_YEARS", "0"))
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
@@ -88,6 +92,71 @@ RELEVANCE_KEYWORDS = {
     "risk management": 1, "financial planning": 1, "quantitative": 1,
     "portfolio": 1, "digital transformation": 1,
 }
+
+# ---------- Experience requirement filtering ----------
+# You're a final-year student with a 4-month internship, not someone with
+# years of full-time experience - so postings requiring more than
+# MAX_EXPERIENCE_YEARS are filtered out entirely rather than just ranked lower.
+
+# Seniority words in the TITLE are the most reliable signal that a role
+# needs more experience than you have, regardless of how the description
+# phrases things.
+SENIOR_TITLE_KEYWORDS = [
+    "senior", "sr.", "sr ", "lead ", "manager", "director", "head of",
+    "principal", "vp ", "vice president", "chief", "staff ",
+]
+
+# Explicit years-of-experience phrasing to look for in the description.
+# Each pattern's first capture group is the minimum number of years required.
+EXPERIENCE_YEAR_PATTERNS = [
+    r"(?:minimum|min\.?|at least)\s*(\d+)\+?\s*years?",
+    r"(\d+)\+?\s*(?:to|-)\s*\d+\+?\s*years?\s*(?:of\s*)?(?:relevant\s*)?experience",
+    r"(\d+)\+?\s*years?\s*(?:of\s*)?(?:relevant\s*|working\s*|professional\s*)?experience",
+    r"(\d+)\+?\s*years?['\u2019]?\s*experience",
+    r"experience\s*(?:of\s*)?(?:at least\s*)?(\d+)\+?\s*years?",
+]
+
+# If any of these appear, treat the job as entry-level regardless of any
+# stray year-number matched elsewhere in the text (e.g. company history).
+ENTRY_LEVEL_OVERRIDE_PATTERNS = [
+    r"entry[\s-]?level",
+    r"fresh grad",
+    r"no experience (?:required|necessary)",
+    r"0\s*[-to]*\s*1\s*years?",
+    r"recent graduate",
+    r"graduate (?:program|programme|trainee)",
+    r"\bintern(?:ship)?\b",
+]
+
+
+def exceeds_experience_threshold(job: dict) -> bool:
+    """Returns True if a job appears to require more than MAX_EXPERIENCE_YEARS
+    of experience, based on its title and description. Used to filter out
+    roles that are a poor fit given your current experience level."""
+    title = job.get("title", "").lower()
+    description = job.get("description", "").lower()
+    combined = f"{title} {description}"
+
+    # Explicit entry-level language always wins, even over a stray year match
+    for pattern in ENTRY_LEVEL_OVERRIDE_PATTERNS:
+        if re.search(pattern, combined):
+            return False
+
+    # Seniority words in the title are a strong, reliable signal on their own
+    for word in SENIOR_TITLE_KEYWORDS:
+        if word in title:
+            return True
+
+    # Look for explicit "X years experience" style phrasing anywhere
+    for pattern in EXPERIENCE_YEAR_PATTERNS:
+        match = re.search(pattern, combined)
+        if match:
+            years_required = int(match.group(1))
+            if years_required > MAX_EXPERIENCE_YEARS:
+                return True
+
+    return False
+
 
 # ---------- Semantic similarity profile ----------
 # This paragraph is embedded once per run and compared against each job's
@@ -331,9 +400,26 @@ def run_job_check(triggered_by_refresh: bool = False):
     new_jobs = [j for j in jobs if str(j.get("id")) not in seen_ids]
     print(f"{len(new_jobs)} of these are new")
 
+    # Filter out jobs requiring more experience than you have. Excluded jobs
+    # are marked as seen immediately so they don't reappear in future digests.
+    kept_jobs = []
+    excluded_ids = []
+    for job in new_jobs:
+        if exceeds_experience_threshold(job):
+            excluded_ids.append(str(job.get("id")))
+        else:
+            kept_jobs.append(job)
+
+    if excluded_ids:
+        print(f"Filtered out {len(excluded_ids)} job(s) requiring more than {MAX_EXPERIENCE_YEARS} year(s) of experience")
+        seen_ids.update(excluded_ids)
+
+    new_jobs = kept_jobs
+
     if not new_jobs:
         if triggered_by_refresh:
             send_telegram_message("🔄 Refreshed - no new jobs found right now.")
+        save_seen_jobs(seen_ids)
         return
 
     # --- Step 1: keyword-based score (exact skill/term matches) ---
