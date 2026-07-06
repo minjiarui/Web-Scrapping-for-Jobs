@@ -5,6 +5,12 @@ Fetches new job postings from the Adzuna API across multiple search terms
 (e.g. "business analyst", "data analyst"), ranks them by relevance to your
 resume/skillset, and sends the top N most relevant new ones to Telegram.
 
+Relevance is scored using a BLEND of:
+  1. Weighted keyword matching (RELEVANCE_KEYWORDS) - exact skill/term hits
+  2. Semantic similarity (sentence-transformers) - how close the job's
+     title+description is in *meaning* to your profile, even if it doesn't
+     use the exact same words.
+
 Runs either on a daily schedule, or instantly when triggered by a Cloudflare
 Worker reacting to a "/refresh" message in Telegram (see README.md).
 
@@ -32,6 +38,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 import requests
+from sentence_transformers import SentenceTransformer, util
 
 # ---------- Configuration ----------
 ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID")
@@ -81,6 +88,34 @@ RELEVANCE_KEYWORDS = {
     "risk management": 1, "financial planning": 1, "quantitative": 1,
     "portfolio": 1, "digital transformation": 1,
 }
+
+# ---------- Semantic similarity profile ----------
+# This paragraph is embedded once per run and compared against each job's
+# title+description using a local, free sentence-embedding model. Unlike
+# keyword matching, this can catch jobs that describe similar work using
+# different words (e.g. "built BI tooling to replace manual spreadsheets"
+# matching your Power BI/Power Query automation experience at KONE, even
+# without the exact words "Power BI" appearing).
+PROFILE_TEXT = """
+Final year Engineering Systems and Design student at SUTD, specialising in
+Business Analytics and Operations Research, graduating May 2027. Completed
+a 4-month data analyst internship at KONE, automating manual Excel
+reporting into Power BI dashboards, building a market analysis tool to
+identify high-potential sales leads, and using Power Query to clean and
+standardise large financial datasets across an 8,000+ asset portfolio.
+Academic projects in statistical modelling, discrete event simulation,
+machine learning, and optimisation using Python, R, SQL, and Julia/JuMP.
+Primarily interested in data analytics, business analytics, and finance
+roles.
+"""
+
+# How much weight each scoring method gets when combined (should sum to 1.0)
+KEYWORD_WEIGHT = 0.4
+SEMANTIC_WEIGHT = 0.6
+
+# Lazily loaded so the model is only downloaded/loaded once per run, and
+# only if there are actually new jobs to score.
+_semantic_model = None
 
 
 def require_env_vars():
@@ -166,6 +201,45 @@ def compute_relevance(job: dict) -> tuple:
             matched.append(keyword)
 
     return score, matched
+
+
+def get_semantic_model() -> SentenceTransformer:
+    """Loads the sentence-embedding model once and reuses it. Uses a small
+    (~90MB) pre-trained model that runs fine on CPU within GitHub Actions."""
+    global _semantic_model
+    if _semantic_model is None:
+        print("Loading semantic similarity model (first run may take a moment)...")
+        _semantic_model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _semantic_model
+
+
+def compute_semantic_scores(jobs: list) -> list:
+    """Returns a list of cosine-similarity scores (roughly 0-1, higher =
+    more semantically similar) between PROFILE_TEXT and each job's
+    title+description, computed in a single batch for efficiency."""
+    if not jobs:
+        return []
+
+    model = get_semantic_model()
+    profile_embedding = model.encode(PROFILE_TEXT, convert_to_tensor=True)
+
+    job_texts = [f"{j.get('title', '')}. {j.get('description', '')}" for j in jobs]
+    job_embeddings = model.encode(job_texts, convert_to_tensor=True)
+
+    similarities = util.cos_sim(profile_embedding, job_embeddings)[0]
+    return [float(s) for s in similarities]
+
+
+def normalize(values: list) -> list:
+    """Min-max normalizes a list of numbers to a 0-1 range so two
+    differently-scaled scores (keyword counts vs. cosine similarity) can be
+    fairly combined. If all values are equal, returns 0.5 for each."""
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        return [0.5 for _ in values]
+    return [(v - lo) / (hi - lo) for v in values]
 
 
 def format_job_message(job: dict) -> str:
@@ -262,11 +336,29 @@ def run_job_check(triggered_by_refresh: bool = False):
             send_telegram_message("🔄 Refreshed - no new jobs found right now.")
         return
 
-    # Score and sort by relevance to your resume, most relevant first
+    # --- Step 1: keyword-based score (exact skill/term matches) ---
+    keyword_scores = []
+    matched_lists = []
     for job in new_jobs:
         score, matched = compute_relevance(job)
-        job["_relevance_score"] = score
+        keyword_scores.append(score)
+        matched_lists.append(matched)
+
+    # --- Step 2: semantic similarity score (meaning-based match) ---
+    print("Computing semantic similarity scores...")
+    semantic_scores = compute_semantic_scores(new_jobs)
+
+    # --- Step 3: normalize both to 0-1, then blend ---
+    normalized_keyword = normalize(keyword_scores)
+    normalized_semantic = normalize(semantic_scores)
+
+    for job, matched, kw_norm, sem_norm, sem_raw in zip(
+        new_jobs, matched_lists, normalized_keyword, normalized_semantic, semantic_scores
+    ):
         job["_matched_keywords"] = matched
+        job["_semantic_score"] = round(sem_raw, 3)
+        job["_relevance_score"] = (KEYWORD_WEIGHT * kw_norm) + (SEMANTIC_WEIGHT * sem_norm)
+
     new_jobs.sort(key=lambda j: j["_relevance_score"], reverse=True)
 
     top_jobs = new_jobs[:MAX_JOBS_PER_DIGEST]
