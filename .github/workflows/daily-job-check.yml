@@ -1,11 +1,6 @@
 name: Daily BA Job Alert
 on:
   schedule:
-    # Runs at ~09:07 Singapore time (UTC+8) = 01:07 UTC every day.
-    # Deliberately NOT on the exact hour (0 1 * * *): GitHub Actions scheduled
-    # workflows are "best effort" and get queued behind everyone else's jobs
-    # scheduled at round, popular times, sometimes causing multi-hour delays.
-    # An off-peak minute like :07 sees far less contention.
     - cron: '7 1 * * *'
   workflow_dispatch:
     inputs:
@@ -14,7 +9,7 @@ on:
         required: false
         default: 'manual'
 permissions:
-  contents: write  # needed so the workflow can commit the updated seen_jobs.json back to the repo
+  contents: write
 jobs:
   check-jobs:
     runs-on: ubuntu-latest
@@ -37,8 +32,6 @@ jobs:
           SEARCH_COUNTRY: 'sg'
           TRIGGERED_BY: ${{ github.event.inputs.triggered_by || 'scheduled' }}
         run: python scripts/job_alert.py
-      - name: Export data for Power BI
-        run: python scripts/export_for_powerbi.py
       - name: Commit updated data files
         run: |
           git config user.name "job-alert-bot"
