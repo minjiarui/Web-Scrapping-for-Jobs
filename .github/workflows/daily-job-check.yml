@@ -1,5 +1,4 @@
 name: Daily BA Job Alert
-
 on:
   schedule:
     # Runs at ~09:07 Singapore time (UTC+8) = 01:07 UTC every day.
@@ -14,25 +13,20 @@ on:
         description: 'How this run was triggered (manual, refresh)'
         required: false
         default: 'manual'
-
 permissions:
   contents: write  # needed so the workflow can commit the updated seen_jobs.json back to the repo
-
 jobs:
   check-jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
-
       - name: Run job alert script
         env:
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
@@ -43,7 +37,8 @@ jobs:
           SEARCH_COUNTRY: 'sg'
           TRIGGERED_BY: ${{ github.event.inputs.triggered_by || 'scheduled' }}
         run: python scripts/job_alert.py
-
+      - name: Export data for Power BI
+        run: python scripts/export_for_powerbi.py
       - name: Commit updated data files
         run: |
           git config user.name "job-alert-bot"
