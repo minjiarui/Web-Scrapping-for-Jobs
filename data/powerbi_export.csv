@@ -1,0 +1,11 @@
+job_id,date_posted,date_scraped,title,company,location,query,keyword_score,semantic_score,relevance_score,matched_keywords,experience_filtered,sent_in_digest,application_status
+5795071903,2026-07-10,2026-07-10,Senior Developer (AngularJava),United States Digital Space LLC,Singapore,business analyst,,,,,True,False,not_applied
+5795071922,2026-07-10,2026-07-10,"VP, Technical Delivery Manager (LNRS Fircosoft), Compliance Technology",UOB Venture,Singapore,business analyst,,,,,True,False,not_applied
+5795062989,2026-07-10,2026-07-10,"Assistant Vice President, Business Analyst (Cash Management)","MUFG Bank, Ltd., Singapore Office",Singapore,business analyst,,,,,True,False,not_applied
+5795059067,2026-07-10,2026-07-10,Senior Java Developer,QUESS ENGINEERING PTE. LTD.,Singapore,business analyst,,,,,True,False,not_applied
+5795072843,2026-07-10,2026-07-10,"Senior Data Analyst - AI, Dashboards & Geospatial Insights",Ministry of Manpower,Singapore,data analyst,,,,,True,False,not_applied
+5795071158,2026-07-10,2026-07-10,Senior Software Engineer (AI Product Development),Csit,Singapore,data analyst,,,,,True,False,not_applied
+5795063170,2026-07-10,2026-07-10,IT Business Analyst (Trading System / ETRM | Located at Raffles Place),GOOD JOB CREATIONS  PTE. LTD.,Singapore,business analyst,0,0.449,0.8,,False,True,not_applied
+5795071844,2026-07-10,2026-07-10,Business Analyst (Central/ ETRM/ Trading),TRUST RECRUIT PTE. LTD.,Singapore,business analyst,0,0.439,0.73,,False,True,not_applied
+5795063048,2026-07-10,2026-07-10,Energy Trading IT BA — Transformation & Delivery,GOOD JOB CREATIONS  PTE. LTD.,Singapore,business analyst,0,0.43,0.675,,False,True,not_applied
+5795072849,2026-07-10,2026-07-10,ASEAN Finance Partner for Growth & Strategy,Michael Page,Singapore,business analyst,0,0.36,0.2,,False,True,not_applied
