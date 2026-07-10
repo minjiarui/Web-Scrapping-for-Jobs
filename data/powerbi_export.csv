@@ -18,3 +18,4 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5795053592,2026-07-10,2026-07-10,Technical Project Manager (Back-end),Starhub,Singapore,data analyst,,,,,True,False,not_applied
 5795059077,2026-07-10,2026-07-10,"AVP, Cash Management Analytics & Solutions","MUFG Bank, Ltd",Singapore,business analyst,0,0.378,0.6,,False,True,not_applied
 5795072848,2026-07-10,2026-07-10,Strategic Cash Management Analyst – Payments & FX,"mufg bank, ltd. singapore branch",Singapore,business analyst,5,0.329,0.4,sql,False,True,not_applied
+5795568429,2026-07-10,2026-07-10,Investment Data Analyst,Ethos BeathChapman,Singapore,business analyst|data analyst,0,0.462,0.5,,False,True,not_applied
