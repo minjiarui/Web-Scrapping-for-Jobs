@@ -34,3 +34,15 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5796501107,2026-07-11,2026-07-11,"Regional Director, Enterprise Tech Sales (WA)",Info-Tech Research Group,Singapore,business analyst,,,,,True,False,not_applied
 5795129802,2026-07-10,2026-07-11,Product Manager - Cognizant,Cognizant,Singapore,business analyst,,,,,True,False,not_applied
 5795568408,2026-07-10,2026-07-11,Business Analyst,Ethos BeathChapman,Singapore,business analyst,0,0.359,0.5,,False,True,not_applied
+5796597780,2026-07-11,2026-07-11,Technical Lead (Talend),NCS Group,Singapore,business analyst,,,,,True,False,not_applied
+5796508520,2026-07-11,2026-07-11,Senior Cash Management Solutions Analyst,"MUFG Bank, Ltd., Singapore Office",Singapore,business analyst,,,,,True,False,not_applied
+5796505154,2026-07-11,2026-07-11,Senior Developer (AngularJava),Luxoft Singapore,Singapore,business analyst,,,,,True,False,not_applied
+5796505009,2026-07-11,2026-07-11,Technical Product Manager - A26218,activate interactive pte ltd,Singapore,business analyst,,,,,True,False,not_applied
+5796511928,2026-07-11,2026-07-11,Data Scientist II,Dormont Manufacturing Co,Singapore,data analyst,,,,,True,False,not_applied
+5796501570,2026-07-11,2026-07-11,Senior Real-Time Collaboration Platform Engineer,Csit,Singapore,data analyst,,,,,True,False,not_applied
+5796510749,2026-07-11,2026-07-11,Data Scientist - Organisational Transformation Dept,Government Technology Agency ,Singapore,data analyst,3,0.542,0.84,machine learning,False,True,not_applied
+5796502021,2026-07-11,2026-07-11,Prime Brokerage Data Analyst (12-Month Contract),Maybank Investment Banking Group,Singapore,data analyst,5,0.342,0.662,power bi,False,True,not_applied
+5796816827,2026-07-11,2026-07-11,Data Engineer,Unison Group,Singapore,business analyst|data analyst,0,0.498,0.526,,False,True,not_applied
+5796505150,2026-07-11,2026-07-11,Software Engineer (Real-time Collaborative Platform – Full Stack),Csit,Singapore,data analyst,0,0.449,0.443,,False,True,not_applied
+5796597633,2026-07-11,2026-07-11,"SVP, Payments Systems & IT Strategy","THE JAPAN RESEARCH INSTITUTE, LTD.",Singapore,business analyst,0,0.378,0.323,,False,True,not_applied
+5796597775,2026-07-11,2026-07-11,"Dir. , Technology Partnership",MSD Malaysia,Singapore,business analyst,0,0.186,0.0,,False,True,not_applied
