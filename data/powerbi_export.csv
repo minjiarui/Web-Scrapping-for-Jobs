@@ -46,3 +46,6 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5796505150,2026-07-11,2026-07-11,Software Engineer (Real-time Collaborative Platform – Full Stack),Csit,Singapore,data analyst,0,0.449,0.443,,False,True,not_applied
 5796597633,2026-07-11,2026-07-11,"SVP, Payments Systems & IT Strategy","THE JAPAN RESEARCH INSTITUTE, LTD.",Singapore,business analyst,0,0.378,0.323,,False,True,not_applied
 5796597775,2026-07-11,2026-07-11,"Dir. , Technology Partnership",MSD Malaysia,Singapore,business analyst,0,0.186,0.0,,False,True,not_applied
+5796961596,2026-07-11,2026-07-11,Delivery Engagement Manager,SS&C Intralinks,Singapore,business analyst,,,,,True,False,not_applied
+5796961164,2026-07-11,2026-07-11,Business Analyst (Trade Finance),Keyrus,Singapore,business analyst,0,0.463,0.8,,False,True,not_applied
+5796960674,2026-07-11,2026-07-11,Business Analyst (Trade Finance products / Swift Messaging / BRD / FRD),Maltem Asia-Pacific,Singapore,business analyst,0,0.436,0.2,,False,True,not_applied
