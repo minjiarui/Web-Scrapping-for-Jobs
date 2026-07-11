@@ -27,3 +27,10 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5796270744,2026-07-11,2026-07-10,Data Scientist - Organisational Transformation Dept,Maritime and Port Authority of Singapore,Singapore,data analyst,3,0.548,1.0,machine learning,False,True,not_applied
 5796274582,2026-07-11,2026-07-10,Avaloq Business Analyst/Avaloq Developer,Accenture,Singapore,business analyst,1,0.38,0.133,wealth management,False,True,not_applied
 5796276092,2026-07-11,2026-07-10,"Business Analyst – Technology Solutions – Corporate (Trade), AVP",OCBC Bank,Singapore,business analyst,0,0.406,0.094,,False,True,not_applied
+5796582549,2026-07-11,2026-07-11,Business Support Services Manager,Microsoft Corporation,Singapore,business analyst,,,,,True,False,not_applied
+5796502822,2026-07-11,2026-07-11,Technical Product Manager - A26218,Activate Interactive,Singapore,business analyst,,,,,True,False,not_applied
+5796502040,2026-07-11,2026-07-11,"Assistant Vice President, Business Analyst (Cash Management) (Job ID: 10077763)","MUFG BANK, LTD. Singapore Branch",Singapore,business analyst,,,,,True,False,not_applied
+5796501588,2026-07-11,2026-07-11,"Executive Director, AI Tech Delivery Lead",Sumitomo Mitsui Banking Corporation,Singapore,business analyst,,,,,True,False,not_applied
+5796501107,2026-07-11,2026-07-11,"Regional Director, Enterprise Tech Sales (WA)",Info-Tech Research Group,Singapore,business analyst,,,,,True,False,not_applied
+5795129802,2026-07-10,2026-07-11,Product Manager - Cognizant,Cognizant,Singapore,business analyst,,,,,True,False,not_applied
+5795568408,2026-07-10,2026-07-11,Business Analyst,Ethos BeathChapman,Singapore,business analyst,0,0.359,0.5,,False,True,not_applied
