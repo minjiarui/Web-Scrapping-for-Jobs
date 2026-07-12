@@ -72,3 +72,5 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5797599201,2026-07-12,2026-07-12,Data Scientist - Organisational Transformation Dept,Nanyang Polytechnic,Singapore,data analyst,3,0.52,0.8,machine learning,False,True,not_applied
 5797598389,2026-07-12,2026-07-12,Strategic Cash Management Business Analyst – Regional,PVH ,Singapore,business analyst,5,0.354,0.4,sql,False,True,not_applied
 5797590824,2026-07-12,2026-07-12,"VP, Principles & Standards- Operating Model Transformation, Regional CBG and WM UDO Office",DBS Bank,Singapore,business analyst|data analyst,1,0.39,0.131,wealth management,False,True,not_applied
+5797961776,2026-07-12,2026-07-12,Business Analyst (Projects),SCIENTE,Singapore,business analyst,1,0.506,0.6,digital transformation,False,True,not_applied
+5797961788,2026-07-12,2026-07-12,Business Risk Analyst (12-Month Contract),Hays,Singapore,business analyst,2,0.4,0.4,wealth management|risk management,False,True,not_applied
