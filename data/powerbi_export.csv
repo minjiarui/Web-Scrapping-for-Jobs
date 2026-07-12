@@ -65,3 +65,10 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5797637476,2026-07-12,2026-07-12,"Business Finance Analyst, Central Intelligence and Analytics APAC",Google,Singapore,business analyst|data analyst,3,0.465,1.0,statistics,False,True,not_applied
 5797592798,2026-07-12,2026-07-12,Data Analyst (Prime Brokerage) (Contract),Maybank Investment Banking Group,Singapore,data analyst,0,0.327,0.141,,False,True,not_applied
 5797637302,2026-07-12,2026-07-12,Regional Business Analyst - APAC Supply Chain,Bloomberg,Singapore,business analyst,0,0.285,0.0,,False,True,not_applied
+5797598909,2026-07-12,2026-07-12,"Technical Product Manager: Data-Driven, Cloud-First Leader",PVH ,Singapore,business analyst|data analyst,,,,,True,False,not_applied
+5797598311,2026-07-12,2026-07-12,Senior Low Code Engineer - A26221,PVH ,Singapore,business analyst,,,,,True,False,not_applied
+5797591290,2026-07-12,2026-07-12,GoTo Financial - Senior Data Scientist - Data Payment,GoTo Group,Singapore,business analyst|data analyst,,,,,True,False,not_applied
+5797590926,2026-07-12,2026-07-12,"Assistant Vice President, Business Analyst (Cash Management)",PVH ,Singapore,business analyst,,,,,True,False,not_applied
+5797599201,2026-07-12,2026-07-12,Data Scientist - Organisational Transformation Dept,Nanyang Polytechnic,Singapore,data analyst,3,0.52,0.8,machine learning,False,True,not_applied
+5797598389,2026-07-12,2026-07-12,Strategic Cash Management Business Analyst – Regional,PVH ,Singapore,business analyst,5,0.354,0.4,sql,False,True,not_applied
+5797590824,2026-07-12,2026-07-12,"VP, Principles & Standards- Operating Model Transformation, Regional CBG and WM UDO Office",DBS Bank,Singapore,business analyst|data analyst,1,0.39,0.131,wealth management,False,True,not_applied
