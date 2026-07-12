@@ -56,3 +56,4 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5797416953,2026-07-12,2026-07-12,"AVP, Business Analyst (Finance Platform), Group Finance",DBS Bank,"Central, Singapore",business analyst,0,0.328,0.217,,False,True,not_applied
 5797416817,2026-07-12,2026-07-12,Regional Business Analyst - APAC Supply Chain,Bloomberg,Singapore,business analyst,0,0.285,0.079,,False,True,not_applied
 5797416541,2026-07-12,2026-07-12,"Commercial Enablement Specialist, Marine",Hempel,Singapore,business analyst,0,0.26,0.0,,False,True,not_applied
+5797591261,2026-07-12,2026-07-12,Technical Product Manager,RAPSYS TECHNOLOGIES PTE. LTD.,Singapore,business analyst,,,,,True,False,not_applied
