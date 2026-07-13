@@ -108,3 +108,5 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5798463015,2026-07-13,2026-07-13,"AVP, Cash Management Strategy & Solutions Analyst",MUFG,Singapore,business analyst,0,0.28,0.5,,False,True,not_applied
 5798810396,2026-07-13,2026-07-13,Senior Digital Business Analyst - Asian Infrastructure Investment Bank,Asian Infrastructure Investment Bank,Singapore,business analyst,,,,,True,False,not_applied
 5798810386,2026-07-13,2026-07-13,Product Business Analyst - Michael Page,Michael Page,Singapore,business analyst,0,0.39,0.5,,False,True,not_applied
+5799233163,2026-07-14,2026-07-13,"Senior Analyst, Footwear Costing Data & Operations",Nike,"Marina South Pier, Central",data analyst,,,,,True,False,not_applied
+5799232508,2026-07-14,2026-07-13,CMI TSY/ALM – Intermediate Automation QA Specialist,Crédit Agricole,Singapore,business analyst,10,0.324,0.5,automation,False,True,not_applied
