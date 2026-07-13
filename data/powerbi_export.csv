@@ -95,3 +95,10 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5798343830,2026-07-13,2026-07-13,Business Analyst with Salesforce experience,AvePoint,Singapore,business analyst,0,0.337,0.14,,False,False,not_applied
 5798341514,2026-07-13,2026-07-13,Cloud Developer,AvePoint,Singapore,business analyst,0,0.313,0.091,,False,False,not_applied
 5798345014,2026-07-13,2026-07-13,Full Stack Engineer,AvePoint,Singapore,business analyst,0,0.269,0.0,,False,False,not_applied
+5798463778,2026-07-13,2026-07-13,"Senior/ Engineer, Software",SPTEL PTE. LTD.,Singapore,business analyst,,,,,True,False,not_applied
+5798463044,2026-07-13,2026-07-13,Senior Product Manager (HSA),Government Technology Agency,Singapore,business analyst,,,,,True,False,not_applied
+5798462737,2026-07-13,2026-07-13,Senior Software Engineer - Java Microservices & DevOps,SPTEL PTE. LTD.,Singapore,business analyst,,,,,True,False,not_applied
+5798462705,2026-07-13,2026-07-13,"Vice President, Technology Manager, International Technology, Global Payments Solutions Technology",Bank of America,Singapore,business analyst,,,,,True,False,not_applied
+5798462522,2026-07-13,2026-07-13,"Assistant Vice President, Business Analyst (Cash Management)",MUFG,Singapore,business analyst,,,,,True,False,not_applied
+5798462512,2026-07-13,2026-07-13,Technical Delivery Manager,saksoft pte limited,Singapore,business analyst,,,,,True,False,not_applied
+5798462468,2026-07-13,2026-07-13,Strategic Cash Management Analyst – Regional,"MUFG Bank, Ltd.",Singapore,business analyst,0,0.304,0.5,,False,True,not_applied
