@@ -74,3 +74,24 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5797590824,2026-07-12,2026-07-12,"VP, Principles & Standards- Operating Model Transformation, Regional CBG and WM UDO Office",DBS Bank,Singapore,business analyst|data analyst,1,0.39,0.131,wealth management,False,True,not_applied
 5797961776,2026-07-12,2026-07-12,Business Analyst (Projects),SCIENTE,Singapore,business analyst,1,0.506,0.6,digital transformation,False,True,not_applied
 5797961788,2026-07-12,2026-07-12,Business Risk Analyst (12-Month Contract),Hays,Singapore,business analyst,2,0.4,0.4,wealth management|risk management,False,True,not_applied
+5798345362,2026-07-13,2026-07-13,"Business Analyst (Senior, 5 Years Experience Preferred)",AvePoint,Singapore,business analyst,,,,,True,False,not_applied
+5798344858,2026-07-13,2026-07-13,Senior Domain Consultant - Capital Markets,Hexaware,Singapore,business analyst,,,,,True,False,not_applied
+5798344473,2026-07-13,2026-07-13,Business Analyst (Change Management Manager),AvePoint,Singapore,business analyst,,,,,True,False,not_applied
+5798343833,2026-07-13,2026-07-13,Senior Business Analyst (Singapore),Radix,"Tuas, West",business analyst,,,,,True,False,not_applied
+5798343439,2026-07-13,2026-07-13,Senior Full Stack Engineer (Java Domain) (62),AvePoint,Singapore,business analyst,,,,,True,False,not_applied
+5798343092,2026-07-13,2026-07-13,"Vice President, Technology Manager, International Technology, Global Payments Solutions Technology",Bank of America,Singapore,business analyst,,,,,True,False,not_applied
+5798345024,2026-07-13,2026-07-13,Data Analyst,Cushman & Wakefield,Singapore,business analyst|data analyst,0,0.559,0.6,,False,True,not_applied
+5798344979,2026-07-13,2026-07-13,Python Developer & Tester,AvePoint,Singapore,business analyst,10,0.296,0.455,python,False,True,not_applied
+5798345046,2026-07-13,2026-07-13,Google Store Sales Operations Lead,Google,Singapore,data analyst,9,0.31,0.443,sql|forecasting|quantitative,False,True,not_applied
+5798344629,2026-07-13,2026-07-13,Business Analyst 378,AvePoint,Singapore,business analyst,0,0.418,0.307,,False,True,not_applied
+5798343245,2026-07-13,2026-07-13,Business Analyst (Proficiency in SharePoint),AvePoint,Singapore,business analyst,1,0.397,0.304,digital transformation,False,True,not_applied
+5798341948,2026-07-13,2026-07-13,Cloud Economist (Business Value),Nutanix,Singapore,business analyst,0,0.411,0.293,,False,True,not_applied
+5798344928,2026-07-13,2026-07-13,"AVP/ VP, Business Analyst (Digital Wealth)",OCBC Bank,Singapore,business analyst,0,0.398,0.267,,False,True,not_applied
+5798345359,2026-07-13,2026-07-13,Business Analyst (SharePoint Implementation),AvePoint,Singapore,business analyst,0,0.378,0.225,,False,True,not_applied
+5798344895,2026-07-13,2026-07-13,Business Analyst (CRM Focus),AvePoint,Singapore,business analyst,0,0.368,0.204,,False,True,not_applied
+5798341412,2026-07-13,2026-07-13,Change Management Consultant,AvePoint,Singapore,business analyst,1,0.347,0.201,digital transformation,False,True,not_applied
+5798343694,2026-07-13,2026-07-13,Business Analyst (Tech Enabled),AvePoint,Singapore,business analyst,0,0.36,0.188,,False,False,not_applied
+5798345259,2026-07-13,2026-07-13,Business Analyst cum Software Tester,AvePoint,Singapore,business analyst,0,0.339,0.145,,False,False,not_applied
+5798343830,2026-07-13,2026-07-13,Business Analyst with Salesforce experience,AvePoint,Singapore,business analyst,0,0.337,0.14,,False,False,not_applied
+5798341514,2026-07-13,2026-07-13,Cloud Developer,AvePoint,Singapore,business analyst,0,0.313,0.091,,False,False,not_applied
+5798345014,2026-07-13,2026-07-13,Full Stack Engineer,AvePoint,Singapore,business analyst,0,0.269,0.0,,False,False,not_applied
