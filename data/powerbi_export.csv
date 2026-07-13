@@ -106,3 +106,5 @@ job_id,date_posted,date_scraped,title,company,location,query,keyword_score,seman
 5798558531,2026-07-13,2026-07-13,Cloud Economist (Business Value),Nutanix,Singapore,business analyst,0,0.413,0.425,,False,True,not_applied
 5798558511,2026-07-13,2026-07-13,Google Store Sales Operations Lead,Google,Singapore,data analyst,0,0.339,0.2,,False,True,not_applied
 5798463015,2026-07-13,2026-07-13,"AVP, Cash Management Strategy & Solutions Analyst",MUFG,Singapore,business analyst,0,0.28,0.5,,False,True,not_applied
+5798810396,2026-07-13,2026-07-13,Senior Digital Business Analyst - Asian Infrastructure Investment Bank,Asian Infrastructure Investment Bank,Singapore,business analyst,,,,,True,False,not_applied
+5798810386,2026-07-13,2026-07-13,Product Business Analyst - Michael Page,Michael Page,Singapore,business analyst,0,0.39,0.5,,False,True,not_applied
