@@ -28,6 +28,7 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SEARCH_QUERIES: 'business analyst,data analyst'
           SEARCH_COUNTRY: 'sg'
           TRIGGERED_BY: ${{ github.event.inputs.triggered_by || 'scheduled' }}
