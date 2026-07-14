@@ -14,11 +14,6 @@ Relevance is scored using a BLEND of:
 Runs either on a daily schedule, or instantly when triggered by a Cloudflare
 Worker reacting to a "/refresh" message in Telegram (see README.md).
 
-Every new job considered in a run (whether sent, skipped for rank, or
-filtered out for experience) is also appended to data/powerbi_export.csv -
-a flat, append-only history file for building a Power BI dashboard on top
-of this pipeline. See README.md for the Power BI connection steps.
-
 Required environment variables (set as GitHub Secrets, see README.md):
     ADZUNA_APP_ID     - your Adzuna API app ID
     ADZUNA_APP_KEY    - your Adzuna API app key
@@ -34,20 +29,24 @@ Optional environment variables:
     MAX_EXPERIENCE_YEARS - filter out jobs requiring more than this many years
                            of experience (default: 0, i.e. entry-level/fresh-
                            grad/internship roles only)
+    ANTHROPIC_API_KEY - if set, enables a deeper AI-based fit check for the
+                        top-ranked jobs: fetches the real job posting page
+                        and asks Claude to honestly assess fit against your
+                        profile. If not set, this step is skipped entirely
+                        and everything else works as before.
     TRIGGERED_BY      - set to "refresh" when triggered on-demand, for message wording
 """
 
-import csv
 import html
 import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote_plus
 
 import requests
+import trafilatura
 from sentence_transformers import SentenceTransformer, util
 
 # ---------- Configuration ----------
@@ -65,31 +64,22 @@ MAX_JOB_AGE_DAYS = int(os.environ.get("MAX_JOB_AGE_DAYS", "3"))
 MAX_JOBS_PER_DIGEST = int(os.environ.get("MAX_JOBS_PER_DIGEST", "10"))
 MAX_EXPERIENCE_YEARS = int(os.environ.get("MAX_EXPERIENCE_YEARS", "0"))
 
+# --- AI-based fit verification (optional - only runs if ANTHROPIC_API_KEY is set) ---
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+
+JOB_PAGE_FETCH_TIMEOUT = 15
+JOB_PAGE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+}
+MAX_JOB_PAGE_TEXT_CHARS = 6000  # keeps the amount of text sent to Claude bounded
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
-
-# ---------- Power BI export ----------
-# Append-only flat history of every new job the bot has ever scored, for
-# building a Power BI dashboard on top of this pipeline (keyword trends,
-# company frequency, score distribution). Unlike seen_jobs.json (just bare
-# IDs, used for dedup), this keeps the actual scoring details.
-EXPORT_FILE = DATA_DIR / "powerbi_export.csv"
-EXPORT_FIELDNAMES = [
-    "job_id",
-    "date_posted",
-    "date_scraped",
-    "title",
-    "company",
-    "location",
-    "query",
-    "keyword_score",
-    "semantic_score",
-    "relevance_score",
-    "matched_keywords",
-    "experience_filtered",
-    "sent_in_digest",
-    "application_status",
-]
 
 ADZUNA_URL = f"https://api.adzuna.com/v1/api/jobs/{SEARCH_COUNTRY}/search/1"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -130,20 +120,40 @@ RELEVANCE_KEYWORDS = {
 
 # Seniority words in the TITLE are the most reliable signal that a role
 # needs more experience than you have, regardless of how the description
-# phrases things.
-SENIOR_TITLE_KEYWORDS = [
-    "senior", "sr.", "sr ", "lead ", "manager", "director", "head of",
-    "principal", "vp ", "vice president", "chief", "staff ",
+# phrases things. Uses \b word boundaries (not manual spacing) so a word at
+# the very end of a title (e.g. "Business Analyst - Team Lead") is still
+# caught correctly.
+SENIOR_TITLE_PATTERNS = [
+    r"\bsenior\b", r"\bsr\.?\b", r"\blead\b", r"\bmanager\b", r"\bdirector\b",
+    r"\bhead of\b", r"\bprincipal\b", r"\bvp\b", r"\bvice president\b",
+    r"\bchief\b", r"\bstaff\b", r"\bexecutive\b", r"\bavp\b", r"\bsvp\b",
+    r"\bassociate director\b", r"\bgroup head\b", r"\bexpert\b",
+    r"\b(?:analyst|manager|consultant)\s*(?:ii|iii|iv)\b",
 ]
+
+# Some words for years/experience phrasing, to catch both "years" and "yrs"
+_YEARS_WORD = r"(?:years?|yrs?)"
 
 # Explicit years-of-experience phrasing to look for in the description.
 # Each pattern's first capture group is the minimum number of years required.
 EXPERIENCE_YEAR_PATTERNS = [
-    r"(?:minimum|min\.?|at least)\s*(\d+)\+?\s*years?",
-    r"(\d+)\+?\s*(?:to|-)\s*\d+\+?\s*years?\s*(?:of\s*)?(?:relevant\s*)?experience",
-    r"(\d+)\+?\s*years?\s*(?:of\s*)?(?:relevant\s*|working\s*|professional\s*)?experience",
-    r"(\d+)\+?\s*years?['\u2019]?\s*experience",
-    r"experience\s*(?:of\s*)?(?:at least\s*)?(\d+)\+?\s*years?",
+    rf"(?:minimum|min\.?|at least)\s*(\d+)\+?\s*{_YEARS_WORD}",
+    rf"(\d+)\+?\s*(?:to|-)\s*\d+\+?\s*{_YEARS_WORD}\s*(?:of\s*)?(?:relevant\s*)?experience",
+    rf"(\d+)\+?\s*{_YEARS_WORD}\s*(?:of\s*)?(?:relevant\s*|working\s*|professional\s*)?experience",
+    rf"(\d+)\+?\s*{_YEARS_WORD}['\u2019]?\s*experience",
+    rf"experience\s*(?:of\s*)?(?:at least\s*)?(\d+)\+?\s*{_YEARS_WORD}",
+]
+
+# Non-numeric phrasing that still signals "we want someone experienced",
+# even without a specific year count the regex above could extract.
+EXPERIENCE_PHRASE_RED_FLAGS = [
+    r"proven track record",
+    r"extensive experience",
+    r"seasoned professional",
+    r"several years of experience",
+    r"deep expertise",
+    r"significant experience",
+    r"substantial experience",
 ]
 
 # If any of these appear, treat the job as entry-level regardless of any
@@ -162,7 +172,14 @@ ENTRY_LEVEL_OVERRIDE_PATTERNS = [
 def exceeds_experience_threshold(job: dict) -> bool:
     """Returns True if a job appears to require more than MAX_EXPERIENCE_YEARS
     of experience, based on its title and description. Used to filter out
-    roles that are a poor fit given your current experience level."""
+    roles that are a poor fit given your current experience level.
+
+    Note: this runs against Adzuna's description snippet, which is
+    sometimes truncated - so it won't catch every senior role (e.g. if the
+    "5 years experience" line falls outside the snippet). The AI fit-check
+    step on your shortlisted top jobs (if ANTHROPIC_API_KEY is set) acts as
+    a second pass using the full page text, which can catch some of what
+    slips through here."""
     title = job.get("title", "").lower()
     description = job.get("description", "").lower()
     combined = f"{title} {description}"
@@ -173,8 +190,8 @@ def exceeds_experience_threshold(job: dict) -> bool:
             return False
 
     # Seniority words in the title are a strong, reliable signal on their own
-    for word in SENIOR_TITLE_KEYWORDS:
-        if word in title:
+    for pattern in SENIOR_TITLE_PATTERNS:
+        if re.search(pattern, title):
             return True
 
     # Look for explicit "X years experience" style phrasing anywhere
@@ -184,6 +201,11 @@ def exceeds_experience_threshold(job: dict) -> bool:
             years_required = int(match.group(1))
             if years_required > MAX_EXPERIENCE_YEARS:
                 return True
+
+    # Look for non-numeric "we want someone experienced" phrasing
+    for pattern in EXPERIENCE_PHRASE_RED_FLAGS:
+        if re.search(pattern, combined):
+            return True
 
     return False
 
@@ -252,71 +274,6 @@ def load_seen_jobs() -> set:
 
 def save_seen_jobs(seen_ids: set):
     save_json(SEEN_JOBS_FILE, sorted(seen_ids)[-1000:])
-
-
-# ---------- Power BI export helpers ----------
-
-def load_exported_job_ids() -> set:
-    """Reads just the job_id column of the existing export, so we know
-    which jobs have already been written and never duplicate a row."""
-    if not EXPORT_FILE.exists():
-        return set()
-    with open(EXPORT_FILE, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        return {row["job_id"] for row in reader}
-
-
-def build_export_row(job: dict, *, experience_filtered: bool, sent_in_digest: bool) -> dict:
-    """Flattens one job dict (plus scoring fields attached elsewhere in the
-    pipeline) into a single CSV row for the Power BI export."""
-    company = job.get("company", {}).get("display_name", "Unknown company")
-    location = job.get("location", {}).get("display_name", "")
-    matched_keywords = "|".join(job.get("_matched_keywords", []))
-    matched_queries = "|".join(job.get("_matched_queries", []))
-
-    return {
-        "job_id": str(job.get("id")),
-        "date_posted": job.get("created", "")[:10],
-        "date_scraped": datetime.now(timezone.utc).date().isoformat(),
-        "title": job.get("title", ""),
-        "company": company,
-        "location": location,
-        "query": matched_queries,
-        "keyword_score": job.get("_keyword_score", ""),
-        "semantic_score": job.get("_semantic_score", ""),
-        "relevance_score": job.get("_relevance_score", ""),
-        "matched_keywords": matched_keywords,
-        "experience_filtered": experience_filtered,
-        "sent_in_digest": sent_in_digest,
-        "application_status": "not_applied",
-    }
-
-
-def append_jobs_to_export(rows: list):
-    """Appends new rows to powerbi_export.csv, writing a header first if the
-    file doesn't exist yet. Rows for job_ids already in the file should be
-    filtered out by the caller before this is called."""
-    if not rows:
-        return
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    file_exists = EXPORT_FILE.exists()
-    with open(EXPORT_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=EXPORT_FIELDNAMES)
-        if not file_exists:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
-def finalize_export(export_rows: list):
-    """Deduplicates against what's already on disk and writes the rest."""
-    if not export_rows:
-        return
-    already_exported = load_exported_job_ids()
-    new_rows = [r for r in export_rows if r["job_id"] not in already_exported]
-    if new_rows:
-        append_jobs_to_export(new_rows)
-        print(f"Appended {len(new_rows)} new row(s) to {EXPORT_FILE.name}")
 
 
 def fetch_jobs_for_query(query: str) -> list:
@@ -406,6 +363,86 @@ def normalize(values: list) -> list:
     return [(v - lo) / (hi - lo) for v in values]
 
 
+def fetch_job_page_text(url: str) -> str:
+    """Attempts to fetch the real job posting page and extract its clean
+    main text (stripping nav bars, ads, cookie banners, etc). Many job
+    boards (LinkedIn, Indeed especially) block automated requests - this is
+    the same limitation that led to the Google Search fallback link in each
+    Telegram message. On any failure, returns None rather than raising, so
+    one blocked/broken page doesn't affect the rest of the digest."""
+    if not url:
+        return None
+    try:
+        resp = requests.get(url, headers=JOB_PAGE_HEADERS, timeout=JOB_PAGE_FETCH_TIMEOUT, allow_redirects=True)
+        if not resp.ok:
+            return None
+        text = trafilatura.extract(resp.text)
+        if not text or len(text) < 200:
+            return None
+        return text[:MAX_JOB_PAGE_TEXT_CHARS]
+    except requests.RequestException:
+        return None
+
+
+def get_ai_suitability_note(job: dict, page_text: str) -> dict:
+    """Sends the fetched job page text plus your profile to Claude (Haiku,
+    for low cost) and asks for a structured fit assessment - specifically
+    flagging experience-level or skill mismatches missed by the earlier
+    regex-based filter (which only sees Adzuna's, sometimes truncated,
+    description snippet). Returns None on any failure so a single bad API
+    call never breaks the rest of the digest.
+
+    Returns a dict: {"fit": "good" | "poor", "note": "short explanation"}"""
+    prompt = f"""You are helping a final-year student evaluate whether a job posting is a good fit.
+
+STUDENT PROFILE:
+{PROFILE_TEXT.strip()}
+
+JOB TITLE: {job.get("title", "Unknown")}
+COMPANY: {job.get("company", {}).get("display_name", "Unknown")}
+
+FULL JOB POSTING TEXT:
+{page_text}
+
+Assess how well this role fits the student's profile above. Specifically
+check whether it actually needs more experience than a 4-month internship
+(e.g. states 2+ years, "senior", "experienced professional" language), or
+whether the core required skills don't really match.
+
+Respond with ONLY a JSON object, no other text, no markdown formatting:
+{{"fit": "good" or "poor", "note": "1-2 short direct sentences explaining why"}}"""
+
+    try:
+        resp = requests.post(
+            ANTHROPIC_API_URL,
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": ANTHROPIC_MODEL,
+                "max_tokens": 150,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        if not resp.ok:
+            print(f"WARNING: Anthropic API call failed ({resp.status_code}): {resp.text[:200]}")
+            return None
+        data = resp.json()
+        text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+        raw_text = " ".join(text_blocks).strip()
+        raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text.strip()).strip()
+        parsed = json.loads(raw_text)
+        if parsed.get("fit") not in ("good", "poor") or not parsed.get("note"):
+            return None
+        return parsed
+    except (requests.RequestException, json.JSONDecodeError) as e:
+        print(f"WARNING: Anthropic API call/parse failed: {e}")
+        return None
+
+
 def format_job_message(job: dict) -> str:
     raw_title = job.get("title", "Untitled role").strip()
     raw_company = job.get("company", {}).get("display_name", "Unknown company")
@@ -430,6 +467,9 @@ def format_job_message(job: dict) -> str:
         shown = ", ".join(matched_keywords[:4])
         match_line = f"\n🎯 Matches your skills: {html.escape(shown)}"
 
+    ai_note = job.get("_ai_note")
+    ai_note_line = f"\n🤖 {html.escape(ai_note)}" if ai_note else ""
+
     search_query = quote_plus(f"{raw_title} {raw_company} Singapore")
     google_search_url = f"https://www.google.com/search?q={search_query}"
 
@@ -437,7 +477,7 @@ def format_job_message(job: dict) -> str:
         f"{tag_line}"
         f"📋 <b>{title}</b>\n"
         f"🏢 {company}\n"
-        f"📍 {location}{salary_line}{match_line}\n"
+        f"📍 {location}{salary_line}{match_line}{ai_note_line}\n"
         f"🗓 Posted: {created}\n"
         f'🔗 <a href="{url}">Apply here (Adzuna)</a>\n'
         f'🔎 <a href="{google_search_url}">Search on Google</a>'
@@ -487,14 +527,8 @@ def run_job_check(triggered_by_refresh: bool = False):
     relevant new ones to Telegram. Jobs outside the top N are deliberately
     left un-marked as seen, so they get re-considered (and re-scored) on a
     future day, in case they become more competitive once today's stronger
-    matches have already been sent.
-
-    Every new job the bot looks at this run - sent, skipped for rank, or
-    filtered out for experience - is queued up as a row for
-    powerbi_export.csv via export_rows, and written out at the end."""
+    matches have already been sent."""
     seen_ids = load_seen_jobs()
-    export_rows = []
-
     jobs = fetch_all_jobs()
     print(f"Fetched {len(jobs)} unique jobs across queries: {', '.join(SEARCH_QUERIES)}")
 
@@ -508,9 +542,6 @@ def run_job_check(triggered_by_refresh: bool = False):
     for job in new_jobs:
         if exceeds_experience_threshold(job):
             excluded_ids.append(str(job.get("id")))
-            export_rows.append(
-                build_export_row(job, experience_filtered=True, sent_in_digest=False)
-            )
         else:
             kept_jobs.append(job)
 
@@ -524,7 +555,6 @@ def run_job_check(triggered_by_refresh: bool = False):
         if triggered_by_refresh:
             send_telegram_message("🔄 Refreshed - no new jobs found right now.")
         save_seen_jobs(seen_ids)
-        finalize_export(export_rows)
         return
 
     # --- Step 1: keyword-based score (exact skill/term matches) ---
@@ -543,49 +573,66 @@ def run_job_check(triggered_by_refresh: bool = False):
     normalized_keyword = normalize(keyword_scores)
     normalized_semantic = normalize(semantic_scores)
 
-    for job, matched, kw_raw, kw_norm, sem_norm, sem_raw in zip(
-        new_jobs, matched_lists, keyword_scores, normalized_keyword, normalized_semantic, semantic_scores
+    for job, matched, kw_norm, sem_norm, sem_raw in zip(
+        new_jobs, matched_lists, normalized_keyword, normalized_semantic, semantic_scores
     ):
         job["_matched_keywords"] = matched
-        job["_keyword_score"] = round(kw_raw, 3)
         job["_semantic_score"] = round(sem_raw, 3)
-        job["_relevance_score"] = round((KEYWORD_WEIGHT * kw_norm) + (SEMANTIC_WEIGHT * sem_norm), 3)
+        job["_relevance_score"] = (KEYWORD_WEIGHT * kw_norm) + (SEMANTIC_WEIGHT * sem_norm)
 
     new_jobs.sort(key=lambda j: j["_relevance_score"], reverse=True)
 
     top_jobs = new_jobs[:MAX_JOBS_PER_DIGEST]
+    remaining_jobs = new_jobs[MAX_JOBS_PER_DIGEST:]
     print(f"Sending top {len(top_jobs)} of {len(new_jobs)} new job(s) by relevance")
+
+    # --- Step 4: deeper AI-based fit check, only for the shortlisted top jobs ---
+    # Unlike the earlier regex filter (which only sees Adzuna's often-
+    # truncated description snippet), this reads the full job page - so it
+    # catches senior/experienced-required roles that slipped through Step 0.
+    # Jobs flagged "poor" fit are dropped and backfilled from the next-best
+    # ranked jobs, so the digest still has up to MAX_JOBS_PER_DIGEST entries.
+    if ANTHROPIC_API_KEY:
+        print("Fetching job pages and running AI fit check on shortlisted jobs...")
+        confirmed_jobs = []
+        candidates = list(top_jobs)
+        while candidates and len(confirmed_jobs) < MAX_JOBS_PER_DIGEST:
+            job = candidates.pop(0)
+            page_text = fetch_job_page_text(job.get("redirect_url", ""))
+            if not page_text:
+                print(f"Could not fetch full page for '{job.get('title')}' - keeping as-is (no AI check)")
+                confirmed_jobs.append(job)
+                continue
+            verdict = get_ai_suitability_note(job, page_text)
+            if verdict is None:
+                confirmed_jobs.append(job)
+                continue
+            job["_ai_note"] = verdict["note"]
+            if verdict["fit"] == "poor":
+                print(f"AI check flagged '{job.get('title')}' as a poor fit - dropping and backfilling")
+                seen_ids.add(str(job.get("id")))
+                if remaining_jobs:
+                    candidates.append(remaining_jobs.pop(0))
+            else:
+                confirmed_jobs.append(job)
+        top_jobs = confirmed_jobs
+    else:
+        print("ANTHROPIC_API_KEY not set - skipping AI-based fit check step")
 
     chunks = build_digest_chunks(top_jobs)
     prefix = "🔄 Refresh: " if triggered_by_refresh else "🔔 "
     header = f"{prefix}Top {len(top_jobs)} job(s) today, ranked by relevance to you:\n\n"
 
     sent_count = 0
-    sent_ids = set()
     for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
         text = (header if i == 0 and len(top_jobs) > 1 else "") + chunk_text
         if send_telegram_message(text):
             for job in jobs_in_chunk:
-                job_id = str(job.get("id"))
-                seen_ids.add(job_id)
-                sent_ids.add(job_id)
+                seen_ids.add(str(job.get("id")))
                 sent_count += 1
 
     print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s) in {len(chunks)} message(s)")
-
-    # Export every scored job this run, not just the ones sent - the rest of
-    # the pool matters for the score-distribution chart in Power BI.
-    for job in new_jobs:
-        export_rows.append(
-            build_export_row(
-                job,
-                experience_filtered=False,
-                sent_in_digest=str(job.get("id")) in sent_ids,
-            )
-        )
-
     save_seen_jobs(seen_ids)
-    finalize_export(export_rows)
 
 
 def main():
