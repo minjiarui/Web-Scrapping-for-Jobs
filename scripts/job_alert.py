@@ -1,9 +1,10 @@
 """
 Business Analyst / Data Analyst Job Alert Bot
 ------------------------------------------------
-Fetches new job postings from the Adzuna API across multiple search terms
-(e.g. "business analyst", "data analyst"), ranks them by relevance to your
-resume/skillset, and sends the top N most relevant new ones to Telegram.
+Fetches new job postings from Adzuna, Jooble, and Careerjet across multiple
+search terms (e.g. "business analyst", "data analyst", "quantitative
+analyst"), ranks them by relevance to your resume/skillset, and sends the
+top N most relevant new ones to Telegram.
 
 Relevance is scored using a BLEND of:
   1. Weighted keyword matching (RELEVANCE_KEYWORDS) - exact skill/term hits
@@ -21,7 +22,16 @@ Required environment variables (set as GitHub Secrets, see README.md):
     TELEGRAM_CHAT_ID   - your personal chat ID (see README.md for how to get this)
 
 Optional environment variables:
-    SEARCH_QUERIES    - comma-separated search terms (default: "business analyst,data analyst")
+    JOOBLE_API_KEY    - if set, also fetches jobs from Jooble. Skipped
+                        entirely (no error) if not set.
+    CAREERJET_AFFID   - if set, also fetches jobs from Careerjet. Skipped
+                        entirely (no error) if not set.
+    SEARCH_LOCATION_NAME - location string passed to Jooble/Careerjet
+                        (default: "Singapore"). Adzuna uses SEARCH_COUNTRY
+                        instead, since it takes a country code.
+    CAREERJET_LOCALE - Careerjet locale code, determines which country
+                        site is queried (default: "en_SG")
+    SEARCH_QUERIES    - comma-separated search terms (default: see below)
     SEARCH_COUNTRY    - Adzuna country code (default: "sg" for Singapore)
     RESULTS_PER_PAGE  - how many jobs to pull per search term per run (default: 20)
     MAX_JOB_AGE_DAYS  - only consider jobs posted in the last N days (default: 3)
@@ -42,6 +52,8 @@ import json
 import os
 import re
 import sys
+from datetime import date, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -55,8 +67,28 @@ ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# Jooble and Careerjet are optional extra sources - each is only queried if
+# its key/affid is set, so leaving these unset just means "skip that source".
+JOOBLE_API_KEY = os.environ.get("JOOBLE_API_KEY")
+CAREERJET_AFFID = os.environ.get("CAREERJET_AFFID")
+SEARCH_LOCATION_NAME = os.environ.get("SEARCH_LOCATION_NAME", "Singapore")
+CAREERJET_LOCALE = os.environ.get("CAREERJET_LOCALE", "en_SG")
+
+# Expanded beyond "business analyst"/"data analyst" to cover BI, operations
+# research, and finance/quant roles that also fit your resume (KONE Power BI
+# work, WorldQuant Alphathon, CFA Research Challenge). Ten queries across
+# three sources is ~30 API calls per run - if you hit rate limits on
+# Jooble/Careerjet's free tiers, trim this list via the SEARCH_QUERIES
+# GitHub Actions variable rather than editing code.
 SEARCH_QUERIES = [
-    q.strip() for q in os.environ.get("SEARCH_QUERIES", "business analyst,data analyst").split(",") if q.strip()
+    q.strip()
+    for q in os.environ.get(
+        "SEARCH_QUERIES",
+        "business analyst,data analyst,business intelligence analyst,"
+        "data science analyst,operations research analyst,quantitative analyst,"
+        "investment analyst,risk analyst,financial analyst,graduate analyst",
+    ).split(",")
+    if q.strip()
 ]
 SEARCH_COUNTRY = os.environ.get("SEARCH_COUNTRY", "sg")
 RESULTS_PER_PAGE = int(os.environ.get("RESULTS_PER_PAGE", "20"))
@@ -82,11 +114,21 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
 
 ADZUNA_URL = f"https://api.adzuna.com/v1/api/jobs/{SEARCH_COUNTRY}/search/1"
+JOOBLE_URL = f"https://jooble.org/api/{JOOBLE_API_KEY}" if JOOBLE_API_KEY else None
+CAREERJET_URL = "https://search.api.careerjet.net/v4/query"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 QUERY_TAGS = {
     "business analyst": "📊 Business Analyst",
     "data analyst": "📈 Data Analyst",
+    "business intelligence analyst": "📊 BI Analyst",
+    "data science analyst": "🧠 Data Science Analyst",
+    "operations research analyst": "🧮 Operations Research Analyst",
+    "quantitative analyst": "📐 Quant Analyst",
+    "investment analyst": "💹 Investment Analyst",
+    "risk analyst": "⚠️ Risk Analyst",
+    "financial analyst": "💰 Financial Analyst",
+    "graduate analyst": "🎓 Graduate Analyst",
 }
 
 # ---------- Resume + LinkedIn-based relevance keywords ----------
@@ -106,11 +148,17 @@ RELEVANCE_KEYWORDS = {
     # Related tools / methods
     "excel": 3, "power query": 3, "machine learning": 3,
     "simulation": 3, "optimization": 3, "forecasting": 3,
-    "dashboard": 3, "nlp": 3, "statistics": 3, "r": 3, "quant": 2,
+    "dashboard": 3, "nlp": 3, "statistics": 3, "r": 3, "quant": 3,
+    # Quant/finance terms - weighted up now that quant analyst, investment
+    # analyst, and risk analyst are active search targets. Ties to your
+    # WorldQuant Alphathon (alphas, portfolio optimisation, Sharpe) and CFA
+    # Research Challenge (valuation, investment thesis) experience.
+    "quantitative": 3, "financial modeling": 3, "portfolio": 2,
+    "valuation": 2, "investment thesis": 2, "alpha": 2,
+    "risk management": 2,
     # Domain-adjacent (finance/sales background)
-    "financial analysis": 1, "valuation": 1, "wealth management": 1,
-    "risk management": 1, "financial planning": 1, "quantitative": 1,
-    "portfolio": 1, "digital transformation": 1,
+    "financial analysis": 1, "wealth management": 1,
+    "financial planning": 1, "digital transformation": 1,
 }
 
 # ---------- Experience requirement filtering ----------
@@ -174,7 +222,7 @@ def exceeds_experience_threshold(job: dict) -> bool:
     of experience, based on its title and description. Used to filter out
     roles that are a poor fit given your current experience level.
 
-    Note: this runs against Adzuna's description snippet, which is
+    Note: this runs against each source's description snippet, which is
     sometimes truncated - so it won't catch every senior role (e.g. if the
     "5 years experience" line falls outside the snippet). The AI fit-check
     step on your shortlisted top jobs (if ANTHROPIC_API_KEY is set) acts as
@@ -226,8 +274,10 @@ identify high-potential sales leads, and using Power Query to clean and
 standardise large financial datasets across an 8,000+ asset portfolio.
 Academic projects in statistical modelling, discrete event simulation,
 machine learning, and optimisation using Python, R, SQL, and Julia/JuMP.
-Primarily interested in data analytics, business analytics, and finance
-roles.
+Also has quantitative finance experience: built and tested trading alphas
+in the WorldQuant BRAIN Alphathon, and conducted equity valuation and
+investment thesis work in the CFA Institute Research Challenge. Primarily
+interested in data analytics, business analytics, and finance roles.
 """
 
 # How much weight each scoring method gets when combined (should sum to 1.0)
@@ -276,7 +326,37 @@ def save_seen_jobs(seen_ids: set):
     save_json(SEEN_JOBS_FILE, sorted(seen_ids)[-1000:])
 
 
-def fetch_jobs_for_query(query: str) -> list:
+def _within_max_age(created: str) -> bool:
+    """Adzuna filters by max_days_old server-side, but Jooble and Careerjet
+    don't support that param, so this applies the same freshness rule
+    client-side to their results. If a date can't be parsed, the job is
+    kept rather than dropped (better to show a possibly-stale job than
+    silently lose a good one to a parsing quirk)."""
+    if not created:
+        return True
+    try:
+        created_date = datetime.strptime(created[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return True
+    return (date.today() - created_date).days <= MAX_JOB_AGE_DAYS
+
+
+def _parse_careerjet_date(raw_date: str) -> str:
+    """Careerjet returns dates as RFC 822 strings (e.g. 'Wed,15 Nov 2025
+    19:13:43 GMT'). The rest of the pipeline expects 'YYYY-MM-DD' (it just
+    slices the first 10 characters of Adzuna's ISO date), so this converts
+    to match."""
+    if not raw_date:
+        return ""
+    try:
+        return parsedate_to_datetime(raw_date).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return ""
+
+
+def fetch_adzuna_jobs_for_query(query: str) -> list:
+    if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
+        return []
     params = {
         "app_id": ADZUNA_APP_ID,
         "app_key": ADZUNA_APP_KEY,
@@ -286,21 +366,121 @@ def fetch_jobs_for_query(query: str) -> list:
         "max_days_old": MAX_JOB_AGE_DAYS,
         "content-type": "application/json",
     }
-    resp = requests.get(ADZUNA_URL, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json().get("results", [])
+    try:
+        resp = requests.get(ADZUNA_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        return resp.json().get("results", [])
+    except (requests.RequestException, ValueError) as e:
+        print(f"WARNING: Adzuna fetch failed for '{query}': {e}")
+        return []
+
+
+def fetch_jooble_jobs_for_query(query: str) -> list:
+    """Fetches jobs from Jooble for a single query, normalized to the same
+    schema used throughout the rest of the pipeline (title, company,
+    location, description, salary_min/max, redirect_url, created, id).
+    Returns an empty list on any failure or if JOOBLE_API_KEY isn't set, so
+    a Jooble outage or missing key never breaks the rest of the run."""
+    if not JOOBLE_API_KEY:
+        return []
+    payload = {"keywords": query, "location": SEARCH_LOCATION_NAME, "page": "1"}
+    try:
+        resp = requests.post(JOOBLE_URL, json=payload, timeout=30)
+        resp.raise_for_status()
+        raw_jobs = resp.json().get("jobs", [])
+    except (requests.RequestException, ValueError) as e:
+        print(f"WARNING: Jooble fetch failed for '{query}': {e}")
+        return []
+
+    normalized = []
+    for raw in raw_jobs:
+        created = (raw.get("updated") or "")[:10]
+        if not _within_max_age(created):
+            continue
+        normalized.append({
+            "id": f"jooble_{raw.get('id')}",
+            "title": raw.get("title", ""),
+            "company": {"display_name": raw.get("company") or "Unknown company"},
+            "location": {"display_name": raw.get("location") or "Location not specified"},
+            "description": raw.get("snippet", ""),
+            "salary_min": None,
+            "salary_max": None,
+            "redirect_url": raw.get("link", ""),
+            "created": created,
+        })
+    return normalized
+
+
+def fetch_careerjet_jobs_for_query(query: str) -> list:
+    """Fetches jobs from Careerjet for a single query, normalized the same
+    way as fetch_jooble_jobs_for_query. Returns an empty list on any
+    failure or if CAREERJET_AFFID isn't set."""
+    if not CAREERJET_AFFID:
+        return []
+    params = {
+        "keywords": query,
+        "location": SEARCH_LOCATION_NAME,
+        "affid": CAREERJET_AFFID,
+        "locale_code": CAREERJET_LOCALE,
+        "user_ip": "127.0.0.1",
+        "user_agent": "job-alert-bot",
+    }
+    try:
+        resp = requests.get(CAREERJET_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError) as e:
+        print(f"WARNING: Careerjet fetch failed for '{query}': {e}")
+        return []
+
+    if data.get("type") != "JOBS":
+        return []  # e.g. ambiguous "LOCATIONS" response - no results this call
+
+    normalized = []
+    for raw in data.get("jobs", []):
+        created = _parse_careerjet_date(raw.get("date", ""))
+        if not _within_max_age(created):
+            continue
+        job_url = raw.get("url", "")
+        normalized.append({
+            "id": f"careerjet_{abs(hash(job_url))}",
+            "title": raw.get("title", ""),
+            "company": {"display_name": raw.get("company") or "Unknown company"},
+            "location": {"display_name": raw.get("locations") or "Location not specified"},
+            "description": raw.get("description", ""),
+            "salary_min": raw.get("salary_min"),
+            "salary_max": raw.get("salary_max"),
+            "redirect_url": job_url,
+            "created": created,
+        })
+    return normalized
 
 
 def fetch_all_jobs() -> list:
+    """Fetches jobs from every configured source (Adzuna always; Jooble and
+    Careerjet only if their keys are set) across all SEARCH_QUERIES, and
+    deduplicates by ID. A job matched by more than one query keeps a
+    combined list of which queries it matched, so the digest message can
+    show all relevant tags."""
     jobs_by_id = {}
-    for query in SEARCH_QUERIES:
-        for job in fetch_jobs_for_query(query):
-            job_id = str(job.get("id"))
-            if job_id in jobs_by_id:
+
+    def add_job(job: dict, query: str):
+        job_id = str(job.get("id"))
+        if job_id in jobs_by_id:
+            if query not in jobs_by_id[job_id]["_matched_queries"]:
                 jobs_by_id[job_id]["_matched_queries"].append(query)
-            else:
-                job["_matched_queries"] = [query]
-                jobs_by_id[job_id] = job
+        else:
+            job["_matched_queries"] = [query]
+            jobs_by_id[job_id] = job
+
+    for query in SEARCH_QUERIES:
+        for job in fetch_adzuna_jobs_for_query(query):
+            add_job(job, query)
+        for job in fetch_jooble_jobs_for_query(query):
+            add_job(job, query)
+        for job in fetch_careerjet_jobs_for_query(query):
+            add_job(job, query)
+
     return list(jobs_by_id.values())
 
 
@@ -388,7 +568,7 @@ def get_ai_suitability_note(job: dict, page_text: str) -> dict:
     """Sends the fetched job page text plus your profile to Claude (Haiku,
     for low cost) and asks for a structured fit assessment - specifically
     flagging experience-level or skill mismatches missed by the earlier
-    regex-based filter (which only sees Adzuna's, sometimes truncated,
+    regex-based filter (which only sees each source's, sometimes truncated,
     description snippet). Returns None on any failure so a single bad API
     call never breaks the rest of the digest.
 
@@ -479,7 +659,7 @@ def format_job_message(job: dict) -> str:
         f"🏢 {company}\n"
         f"📍 {location}{salary_line}{match_line}{ai_note_line}\n"
         f"🗓 Posted: {created}\n"
-        f'🔗 <a href="{url}">Apply here (Adzuna)</a>\n'
+        f'🔗 <a href="{url}">Apply here</a>\n'
         f'🔎 <a href="{google_search_url}">Search on Google</a>'
     )
 
@@ -587,7 +767,7 @@ def run_job_check(triggered_by_refresh: bool = False):
     print(f"Sending top {len(top_jobs)} of {len(new_jobs)} new job(s) by relevance")
 
     # --- Step 4: deeper AI-based fit check, only for the shortlisted top jobs ---
-    # Unlike the earlier regex filter (which only sees Adzuna's often-
+    # Unlike the earlier regex filter (which only sees each source's often-
     # truncated description snippet), this reads the full job page - so it
     # catches senior/experienced-required roles that slipped through Step 0.
     # Jobs flagged "poor" fit are dropped and backfilled from the next-best
