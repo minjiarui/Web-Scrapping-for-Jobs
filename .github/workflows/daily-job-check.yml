@@ -29,8 +29,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SEARCH_QUERIES: 'business analyst,data analyst'
+          JOOBLE_API_KEY: ${{ secrets.JOOBLE_API_KEY }}
+          CAREERJET_AFFID: ${{ secrets.CAREERJET_AFFID }}
+          SEARCH_QUERIES: 'business analyst,data analyst,business intelligence analyst,data science analyst,operations research analyst,quantitative analyst,investment analyst,risk analyst,financial analyst,graduate analyst'
           SEARCH_COUNTRY: 'sg'
+          SEARCH_LOCATION_NAME: 'Singapore'
+          CAREERJET_LOCALE: 'en_SG'
           TRIGGERED_BY: ${{ github.event.inputs.triggered_by || 'scheduled' }}
         run: python scripts/job_alert.py
       - name: Commit updated data files
