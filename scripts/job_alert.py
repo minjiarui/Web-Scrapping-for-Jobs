@@ -15,6 +15,12 @@ Relevance is scored using a BLEND of:
 Runs either on a daily schedule, or instantly when triggered by a Cloudflare
 Worker reacting to a "/refresh" message in Telegram (see README.md).
 
+Every new job considered in a run (whether sent, dropped by the AI fit
+check, or filtered out for experience) is also appended to
+data/powerbi_export.csv - a flat, append-only history file for building a
+Power BI dashboard on top of this pipeline. See README.md for the Power BI
+connection steps.
+
 Required environment variables (set as GitHub Secrets, see README.md):
     ADZUNA_APP_ID     - your Adzuna API app ID
     ADZUNA_APP_KEY    - your Adzuna API app key
@@ -47,12 +53,13 @@ Optional environment variables:
     TRIGGERED_BY      - set to "refresh" when triggered on-demand, for message wording
 """
 
+import csv
 import html
 import json
 import os
 import re
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -112,6 +119,31 @@ MAX_JOB_PAGE_TEXT_CHARS = 6000  # keeps the amount of text sent to Claude bounde
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
+
+# ---------- Power BI export ----------
+# Append-only flat history of every new job the bot has ever scored, for
+# building a Power BI dashboard on top of this pipeline (keyword trends,
+# company frequency, score distribution, AI fit-check outcomes). Unlike
+# seen_jobs.json (just bare IDs, used for dedup), this keeps the actual
+# scoring details.
+EXPORT_FILE = DATA_DIR / "powerbi_export.csv"
+EXPORT_FIELDNAMES = [
+    "job_id",
+    "date_posted",
+    "date_scraped",
+    "title",
+    "company",
+    "location",
+    "query",
+    "keyword_score",
+    "semantic_score",
+    "relevance_score",
+    "matched_keywords",
+    "experience_filtered",
+    "ai_suitability_note",
+    "sent_in_digest",
+    "application_status",
+]
 
 ADZUNA_URL = f"https://api.adzuna.com/v1/api/jobs/{SEARCH_COUNTRY}/search/1"
 JOOBLE_URL = f"https://jooble.org/api/{JOOBLE_API_KEY}" if JOOBLE_API_KEY else None
@@ -324,6 +356,72 @@ def load_seen_jobs() -> set:
 
 def save_seen_jobs(seen_ids: set):
     save_json(SEEN_JOBS_FILE, sorted(seen_ids)[-1000:])
+
+
+# ---------- Power BI export helpers ----------
+
+def load_exported_job_ids() -> set:
+    """Reads just the job_id column of the existing export, so we know
+    which jobs have already been written and never duplicate a row."""
+    if not EXPORT_FILE.exists():
+        return set()
+    with open(EXPORT_FILE, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return {row["job_id"] for row in reader}
+
+
+def build_export_row(job: dict, *, experience_filtered: bool, sent_in_digest: bool) -> dict:
+    """Flattens one job dict (plus scoring fields attached elsewhere in the
+    pipeline) into a single CSV row for the Power BI export."""
+    company = job.get("company", {}).get("display_name", "Unknown company")
+    location = job.get("location", {}).get("display_name", "")
+    matched_keywords = "|".join(job.get("_matched_keywords", []))
+    matched_queries = "|".join(job.get("_matched_queries", []))
+
+    return {
+        "job_id": str(job.get("id")),
+        "date_posted": job.get("created", "")[:10],
+        "date_scraped": datetime.now(timezone.utc).date().isoformat(),
+        "title": job.get("title", ""),
+        "company": company,
+        "location": location,
+        "query": matched_queries,
+        "keyword_score": job.get("_keyword_score", ""),
+        "semantic_score": job.get("_semantic_score", ""),
+        "relevance_score": job.get("_relevance_score", ""),
+        "matched_keywords": matched_keywords,
+        "experience_filtered": experience_filtered,
+        "ai_suitability_note": job.get("_ai_note", ""),
+        "sent_in_digest": sent_in_digest,
+        "application_status": "not_applied",
+    }
+
+
+def append_jobs_to_export(rows: list):
+    """Appends new rows to powerbi_export.csv, writing a header first if the
+    file doesn't exist yet. Rows for job_ids already in the file should be
+    filtered out by the caller before this is called."""
+    if not rows:
+        return
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    file_exists = EXPORT_FILE.exists()
+    with open(EXPORT_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=EXPORT_FIELDNAMES)
+        if not file_exists:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def finalize_export(export_rows: list):
+    """Deduplicates against what's already on disk and writes the rest."""
+    if not export_rows:
+        return
+    already_exported = load_exported_job_ids()
+    new_rows = [r for r in export_rows if r["job_id"] not in already_exported]
+    if new_rows:
+        append_jobs_to_export(new_rows)
+        print(f"Appended {len(new_rows)} new row(s) to {EXPORT_FILE.name}")
 
 
 def _within_max_age(created: str) -> bool:
@@ -707,8 +805,14 @@ def run_job_check(triggered_by_refresh: bool = False):
     relevant new ones to Telegram. Jobs outside the top N are deliberately
     left un-marked as seen, so they get re-considered (and re-scored) on a
     future day, in case they become more competitive once today's stronger
-    matches have already been sent."""
+    matches have already been sent.
+
+    Every new job the bot looks at this run - sent, AI-dropped, skipped for
+    rank, or filtered out for experience - is queued up as a row for
+    powerbi_export.csv via export_rows, and written out at the end."""
     seen_ids = load_seen_jobs()
+    export_rows = []
+
     jobs = fetch_all_jobs()
     print(f"Fetched {len(jobs)} unique jobs across queries: {', '.join(SEARCH_QUERIES)}")
 
@@ -722,6 +826,9 @@ def run_job_check(triggered_by_refresh: bool = False):
     for job in new_jobs:
         if exceeds_experience_threshold(job):
             excluded_ids.append(str(job.get("id")))
+            export_rows.append(
+                build_export_row(job, experience_filtered=True, sent_in_digest=False)
+            )
         else:
             kept_jobs.append(job)
 
@@ -735,6 +842,7 @@ def run_job_check(triggered_by_refresh: bool = False):
         if triggered_by_refresh:
             send_telegram_message("🔄 Refreshed - no new jobs found right now.")
         save_seen_jobs(seen_ids)
+        finalize_export(export_rows)
         return
 
     # --- Step 1: keyword-based score (exact skill/term matches) ---
@@ -753,12 +861,13 @@ def run_job_check(triggered_by_refresh: bool = False):
     normalized_keyword = normalize(keyword_scores)
     normalized_semantic = normalize(semantic_scores)
 
-    for job, matched, kw_norm, sem_norm, sem_raw in zip(
-        new_jobs, matched_lists, normalized_keyword, normalized_semantic, semantic_scores
+    for job, matched, kw_raw, kw_norm, sem_norm, sem_raw in zip(
+        new_jobs, matched_lists, keyword_scores, normalized_keyword, normalized_semantic, semantic_scores
     ):
         job["_matched_keywords"] = matched
+        job["_keyword_score"] = round(kw_raw, 3)
         job["_semantic_score"] = round(sem_raw, 3)
-        job["_relevance_score"] = (KEYWORD_WEIGHT * kw_norm) + (SEMANTIC_WEIGHT * sem_norm)
+        job["_relevance_score"] = round((KEYWORD_WEIGHT * kw_norm) + (SEMANTIC_WEIGHT * sem_norm), 3)
 
     new_jobs.sort(key=lambda j: j["_relevance_score"], reverse=True)
 
@@ -804,15 +913,32 @@ def run_job_check(triggered_by_refresh: bool = False):
     header = f"{prefix}Top {len(top_jobs)} job(s) today, ranked by relevance to you:\n\n"
 
     sent_count = 0
+    sent_ids = set()
     for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
         text = (header if i == 0 and len(top_jobs) > 1 else "") + chunk_text
         if send_telegram_message(text):
             for job in jobs_in_chunk:
-                seen_ids.add(str(job.get("id")))
+                job_id = str(job.get("id"))
+                seen_ids.add(job_id)
+                sent_ids.add(job_id)
                 sent_count += 1
 
     print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s) in {len(chunks)} message(s)")
+
+    # Export every scored job this run, not just the ones sent - AI-dropped
+    # and lower-ranked jobs matter for the score-distribution chart in
+    # Power BI, and AI-dropped jobs carry their ai_suitability_note too.
+    for job in new_jobs:
+        export_rows.append(
+            build_export_row(
+                job,
+                experience_filtered=False,
+                sent_in_digest=str(job.get("id")) in sent_ids,
+            )
+        )
+
     save_seen_jobs(seen_ids)
+    finalize_export(export_rows)
 
 
 def main():
