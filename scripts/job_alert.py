@@ -736,8 +736,9 @@ def format_job_message(job: dict) -> str:
     if salary_min and salary_max:
         salary_line = f"\n💰 {salary_min:,.0f} - {salary_max:,.0f}"
 
-    tags = " ".join(QUERY_TAGS.get(q, q) for q in job.get("_matched_queries", []))
-    tag_line = f"{tags}\n" if tags else ""
+    matched_queries = job.get("_matched_queries", [])
+    primary_tag = QUERY_TAGS.get(matched_queries[0], matched_queries[0]) if matched_queries else ""
+    tag_line = f"{primary_tag}\n" if primary_tag else ""
 
     matched_keywords = job.get("_matched_keywords", [])
     match_line = ""
