@@ -1,9 +1,5 @@
 name: Telegram Refresh Check
 on:
-  schedule:
-    # Every 30 minutes. Kept at 30 min (not more frequent) to stay comfortably
-    # within GitHub's free Actions minutes budget for a private repo.
-    - cron: '*/30 * * * *'
   workflow_dispatch: {}  # lets you manually trigger a run from the Actions tab, useful for testing
 permissions:
   contents: write
