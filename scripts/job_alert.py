@@ -786,7 +786,7 @@ def build_digest_chunks(new_jobs: list, max_length: int = 3500):
     return chunks
 
 
-def send_telegram_message(text: str, disable_preview: bool = True) -> bool:
+def send_telegram_message(text: str, disable_preview: bool = True, reply_markup: dict = None) -> bool:
     url = f"{TELEGRAM_API}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -794,11 +794,26 @@ def send_telegram_message(text: str, disable_preview: bool = True) -> bool:
         "parse_mode": "HTML",
         "disable_web_page_preview": disable_preview,
     }
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
     resp = requests.post(url, data=payload, timeout=15)
     if not resp.ok:
         print(f"WARNING: Telegram send failed ({resp.status_code}): {resp.text}")
         return False
     return True
+
+
+def build_apply_keyboard(job_id: str) -> dict:
+    """Inline button shown under each digest message - lets you mark a job
+    as applied with a single tap instead of typing a command. Tapping it
+    fires a callback_query Telegram update, which the Cloudflare Worker
+    routes to the "Telegram Status Update" workflow (see
+    scripts/update_status.py)."""
+    return {
+        "inline_keyboard": [[
+            {"text": "✅ Mark Applied", "callback_data": f"applied:{job_id}"}
+        ]]
+    }
 
 
 def run_job_check(triggered_by_refresh: bool = False):
@@ -909,22 +924,29 @@ def run_job_check(triggered_by_refresh: bool = False):
     else:
         print("ANTHROPIC_API_KEY not set - skipping AI-based fit check step")
 
-    chunks = build_digest_chunks(top_jobs)
+    # Each job now gets its own message (rather than several jobs sharing
+    # one batched message) so the "Mark Applied" button under it is
+    # unambiguous - Telegram buttons apply to a whole message, so batching
+    # would make a tap ambiguous about which job it referred to.
     prefix = "🔄 Refresh: " if triggered_by_refresh else "🔔 "
-    header = f"{prefix}Top {len(top_jobs)} job(s) today, ranked by relevance to you:\n\n"
+    if top_jobs:
+        send_telegram_message(
+            f"{prefix}Top {len(top_jobs)} job(s) today, ranked by relevance to you. "
+            f"Tap ✅ under a job once you've applied:"
+        )
 
     sent_count = 0
     sent_ids = set()
-    for i, (chunk_text, jobs_in_chunk) in enumerate(chunks):
-        text = (header if i == 0 and len(top_jobs) > 1 else "") + chunk_text
-        if send_telegram_message(text):
-            for job in jobs_in_chunk:
-                job_id = str(job.get("id"))
-                seen_ids.add(job_id)
-                sent_ids.add(job_id)
-                sent_count += 1
+    for job in top_jobs:
+        job_id = str(job.get("id"))
+        text = format_job_message(job)
+        keyboard = build_apply_keyboard(job_id)
+        if send_telegram_message(text, reply_markup=keyboard):
+            seen_ids.add(job_id)
+            sent_ids.add(job_id)
+            sent_count += 1
 
-    print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s) in {len(chunks)} message(s)")
+    print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s), one message each")
 
     # Export every scored job this run, not just the ones sent - AI-dropped
     # and lower-ranked jobs matter for the score-distribution chart in
