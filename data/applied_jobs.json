@@ -13,8 +13,8 @@
     "date_applied": "2026-07-22",
     "date_interview": null,
     "date_offer": null,
-    "date_rejected": null,
-    "status": "applied",
+    "date_rejected": "2026-07-22",
+    "status": "rejected",
     "title": "Unknown title"
   },
   "5808573150": {
