@@ -365,9 +365,9 @@ def load_exported_job_ids() -> set:
     which jobs have already been written and never duplicate a row."""
     if not EXPORT_FILE.exists():
         return set()
-    with open(EXPORT_FILE, "r", newline="", encoding="utf-8") as f:
+    with open(EXPORT_FILE, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        return {row["job_id"] for row in reader}
+        return {row["job_id"] for row in reader if row.get("job_id")}
 
 
 def build_export_row(job: dict, *, experience_filtered: bool, sent_in_digest: bool) -> dict:
