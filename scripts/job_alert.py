@@ -119,6 +119,7 @@ MAX_JOB_PAGE_TEXT_CHARS = 6000  # keeps the amount of text sent to Claude bounde
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
+APPLIED_JOBS_FILE = DATA_DIR / "applied_jobs.json"
 
 # ---------- Power BI export ----------
 # Append-only flat history of every new job the bot has ever scored, for
@@ -422,6 +423,37 @@ def finalize_export(export_rows: list):
     if new_rows:
         append_jobs_to_export(new_rows)
         print(f"Appended {len(new_rows)} new row(s) to {EXPORT_FILE.name}")
+
+
+def backfill_applied_job_titles():
+    """Repairs any applied_jobs.json entries stuck showing "Unknown title" /
+    "Unknown company" - this happens if a status button was tapped within
+    seconds of a digest arriving, before that day's export commit had
+    actually landed on GitHub, so update_status.py's lookup came up empty
+    at the time. Re-checking here, after this run's own export is written,
+    catches both today's races and any left over from previous days."""
+    if not APPLIED_JOBS_FILE.exists() or not EXPORT_FILE.exists():
+        return
+
+    applied_jobs = load_json(APPLIED_JOBS_FILE, {})
+    unknown_ids = {jid for jid, entry in applied_jobs.items() if entry.get("title") == "Unknown title"}
+    if not unknown_ids:
+        return
+
+    with open(EXPORT_FILE, "r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        lookup = {row["job_id"]: row for row in reader if row.get("job_id") in unknown_ids}
+
+    fixed_count = 0
+    for job_id, row in lookup.items():
+        entry = applied_jobs[job_id]
+        entry["title"] = row.get("title") or entry["title"]
+        entry["company"] = row.get("company") or entry["company"]
+        fixed_count += 1
+
+    if fixed_count:
+        save_json(APPLIED_JOBS_FILE, applied_jobs)
+        print(f"Backfilled title/company for {fixed_count} previously-unknown applied job(s)")
 
 
 def _within_max_age(created: str) -> bool:
@@ -972,6 +1004,7 @@ def main():
         print("Triggered instantly via /refresh")
         send_telegram_message("🔄 Refreshing job search now...")
     run_job_check(triggered_by_refresh=triggered_by_refresh)
+    backfill_applied_job_titles()
 
 
 if __name__ == "__main__":
