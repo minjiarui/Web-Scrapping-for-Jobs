@@ -1,0 +1,46 @@
+name: Telegram Status Update
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Job ID from the tapped button'
+        required: true
+      action:
+        description: 'New status: applied, interview, offer, or rejected'
+        required: true
+      chat_id:
+        description: 'Telegram chat ID (for editing the message buttons)'
+        required: false
+      message_id:
+        description: 'Telegram message ID (for editing the message buttons)'
+        required: false
+permissions:
+  contents: write
+jobs:
+  update-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Update application status
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          JOB_ID: ${{ github.event.inputs.job_id }}
+          ACTION: ${{ github.event.inputs.action }}
+          TELEGRAM_CHAT_ID: ${{ github.event.inputs.chat_id }}
+          TELEGRAM_MESSAGE_ID: ${{ github.event.inputs.message_id }}
+        run: python scripts/update_status.py
+      - name: Commit updated data files
+        run: |
+          git config user.name "job-alert-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update application status [skip ci]"
+          git pull --rebase origin main
+          git push
