@@ -58,6 +58,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -118,6 +119,7 @@ JOB_PAGE_HEADERS = {
 MAX_JOB_PAGE_TEXT_CHARS = 6000  # keeps the amount of text sent to Claude bounded
 
 DATA_DIR = Path(__file__).parent.parent / "data"
+REPO_ROOT = DATA_DIR.parent
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
 APPLIED_JOBS_FILE = DATA_DIR / "applied_jobs.json"
 
@@ -423,6 +425,36 @@ def finalize_export(export_rows: list):
     if new_rows:
         append_jobs_to_export(new_rows)
         print(f"Appended {len(new_rows)} new row(s) to {EXPORT_FILE.name}")
+
+
+def commit_and_push_export():
+    """Commits and pushes data/powerbi_export.csv immediately, in the
+    middle of the run - BEFORE any Telegram messages (and their "Mark
+    Applied" buttons) go out. This closes the race that previously let a
+    fast button tap beat the export data to GitHub: update_status.py runs
+    in a separate Action with its own fresh checkout, and would find
+    nothing to look up if the row hadn't been pushed yet, falling back to
+    "Unknown title"/"Unknown company". Safe to call even when there's
+    nothing new to commit - it's a no-op in that case."""
+    try:
+        subprocess.run(["git", "config", "user.name", "job-alert-bot"], cwd=REPO_ROOT, check=True)
+        subprocess.run(["git", "config", "user.email", "actions@github.com"], cwd=REPO_ROOT, check=True)
+        subprocess.run(["git", "add", "data/powerbi_export.csv"], cwd=REPO_ROOT, check=True)
+
+        diff_check = subprocess.run(["git", "diff", "--staged", "--quiet"], cwd=REPO_ROOT)
+        if diff_check.returncode == 0:
+            print("No new export rows to commit yet")
+            return
+
+        subprocess.run(
+            ["git", "commit", "-m", "Update job export before sending digest [skip ci]"],
+            cwd=REPO_ROOT, check=True,
+        )
+        subprocess.run(["git", "pull", "--rebase", "origin", "main"], cwd=REPO_ROOT, check=True)
+        subprocess.run(["git", "push"], cwd=REPO_ROOT, check=True)
+        print("Committed and pushed powerbi_export.csv before sending digest")
+    except subprocess.CalledProcessError as e:
+        print(f"WARNING: git commit/push of export failed ({e}) - buttons tapped immediately may still show Unknown title this run")
 
 
 def backfill_applied_job_titles():
@@ -891,6 +923,7 @@ def run_job_check(triggered_by_refresh: bool = False):
             send_telegram_message("🔄 Refreshed - no new jobs found right now.")
         save_seen_jobs(seen_ids)
         finalize_export(export_rows)
+        commit_and_push_export()
         return
 
     # --- Step 1: keyword-based score (exact skill/term matches) ---
@@ -956,6 +989,26 @@ def run_job_check(triggered_by_refresh: bool = False):
     else:
         print("ANTHROPIC_API_KEY not set - skipping AI-based fit check step")
 
+    # Build and push the export BEFORE sending any Telegram messages - this
+    # is what actually eliminates the "Unknown title" race: previously the
+    # CSV wasn't committed until after every message (and its button) had
+    # already gone out, so a fast tap could beat the commit. Now the row
+    # exists on GitHub before the button referencing it does. sent_in_digest
+    # is set from top_job_ids (who we're about to send to) rather than
+    # waiting to see who actually succeeds, since we need this written
+    # before sending happens at all.
+    top_job_ids = {str(job.get("id")) for job in top_jobs}
+    for job in new_jobs:
+        export_rows.append(
+            build_export_row(
+                job,
+                experience_filtered=False,
+                sent_in_digest=str(job.get("id")) in top_job_ids,
+            )
+        )
+    finalize_export(export_rows)
+    commit_and_push_export()
+
     # Each job now gets its own message (rather than several jobs sharing
     # one batched message) so the "Mark Applied" button under it is
     # unambiguous - Telegram buttons apply to a whole message, so batching
@@ -968,32 +1021,17 @@ def run_job_check(triggered_by_refresh: bool = False):
         )
 
     sent_count = 0
-    sent_ids = set()
     for job in top_jobs:
         job_id = str(job.get("id"))
         text = format_job_message(job)
         keyboard = build_apply_keyboard(job_id)
         if send_telegram_message(text, reply_markup=keyboard):
             seen_ids.add(job_id)
-            sent_ids.add(job_id)
             sent_count += 1
 
     print(f"Successfully sent {sent_count} of {len(top_jobs)} job(s), one message each")
 
-    # Export every scored job this run, not just the ones sent - AI-dropped
-    # and lower-ranked jobs matter for the score-distribution chart in
-    # Power BI, and AI-dropped jobs carry their ai_suitability_note too.
-    for job in new_jobs:
-        export_rows.append(
-            build_export_row(
-                job,
-                experience_filtered=False,
-                sent_in_digest=str(job.get("id")) in sent_ids,
-            )
-        )
-
     save_seen_jobs(seen_ids)
-    finalize_export(export_rows)
 
 
 def main():
