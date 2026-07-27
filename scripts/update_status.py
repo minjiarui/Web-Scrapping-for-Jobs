@@ -36,6 +36,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 VALID_ACTIONS = {"applied", "interview", "offer", "rejected"}
+FORGET_ACTION = "forget"
 
 # Buttons shown after each stage - only the logical next steps. A terminal
 # stage (offer/rejected) removes the buttons entirely rather than looping
@@ -87,6 +88,7 @@ def find_job_in_export(job_id: str) -> dict:
 def update_applied_jobs(job_id: str, action: str) -> dict:
     applied_jobs = load_json(APPLIED_JOBS_FILE, {})
     entry = applied_jobs.get(job_id)
+
     if entry is None:
         job_info = find_job_in_export(job_id)
         entry = {
@@ -98,6 +100,15 @@ def update_applied_jobs(job_id: str, action: str) -> dict:
             "date_offer": None,
             "date_rejected": None,
         }
+    elif entry.get("title") == "Unknown title":
+        # Existing entry, but still stuck on Unknown from an earlier tap
+        # that beat the export commit - retry the lookup now, since the
+        # row may well exist by this point.
+        job_info = find_job_in_export(job_id)
+        if job_info.get("title"):
+            entry["title"] = job_info["title"]
+        if job_info.get("company"):
+            entry["company"] = job_info["company"]
 
     entry["status"] = action
     entry[f"date_{action}"] = datetime.now(timezone.utc).date().isoformat()
@@ -137,6 +148,29 @@ def update_export_status(job_id: str, action: str):
         writer.writerows(rows)
 
 
+def remove_applied_job(job_id: str):
+    """Deletes a job's entry from applied_jobs.json entirely - used by the
+    /forget <job_id> Telegram command, so a wrong tap or a stale entry can
+    be cleaned up from Telegram directly, without ever touching the file
+    in GitHub by hand. Returns the removed entry (or None if it wasn't
+    tracked to begin with)."""
+    applied_jobs = load_json(APPLIED_JOBS_FILE, {})
+    entry = applied_jobs.pop(job_id, None)
+    if entry is not None:
+        save_json(APPLIED_JOBS_FILE, applied_jobs)
+    return entry
+
+
+def notify_chat(chat_id: str, text: str):
+    """Sends a plain confirmation message - used for /forget, which has no
+    existing message/buttons to edit the way a status-button tap does."""
+    url = f"{TELEGRAM_API}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    resp = requests.post(url, data=payload, timeout=15)
+    if not resp.ok:
+        print(f"WARNING: Failed to send Telegram notification ({resp.status_code}): {resp.text}")
+
+
 def update_telegram_buttons(job_id: str, action: str, chat_id: str, message_id: str):
     """Swaps the tapped message's buttons to the next logical stage (or
     removes them entirely for a terminal stage like offer/rejected)."""
@@ -160,9 +194,22 @@ def main():
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     message_id = os.environ.get("TELEGRAM_MESSAGE_ID", "").strip()
 
-    if not job_id or action not in VALID_ACTIONS:
+    if not job_id or (action not in VALID_ACTIONS and action != FORGET_ACTION):
         print(f"ERROR: invalid job_id ({job_id!r}) or action ({action!r})")
         sys.exit(1)
+
+    if action == FORGET_ACTION:
+        entry = remove_applied_job(job_id)
+        if entry:
+            update_export_status(job_id, "not_applied")
+            print(f"Removed job {job_id} ({entry['title']} @ {entry['company']}) from applied_jobs.json")
+            if chat_id:
+                notify_chat(chat_id, f"🗑 Removed \"{entry['title']}\" @ {entry['company']} from your pipeline.")
+        else:
+            print(f"No applied_jobs.json entry found for job_id {job_id} - nothing to forget")
+            if chat_id:
+                notify_chat(chat_id, f"⚠️ No tracked application found for job ID {job_id}.")
+        return
 
     entry = update_applied_jobs(job_id, action)
     update_export_status(job_id, action)
