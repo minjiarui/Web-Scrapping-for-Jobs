@@ -12,9 +12,9 @@
     "company": "Unknown company",
     "date_applied": "2026-07-27",
     "date_interview": "2026-07-29",
-    "date_offer": null,
+    "date_offer": "2026-07-29",
     "date_rejected": null,
-    "status": "interview",
+    "status": "offer",
     "title": "Unknown title"
   }
 }
