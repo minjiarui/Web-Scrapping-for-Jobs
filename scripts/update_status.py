@@ -107,8 +107,10 @@ def update_applied_jobs(job_id: str, action: str) -> dict:
         job_info = find_job_in_export(job_id)
         if job_info.get("title"):
             entry["title"] = job_info["title"]
-        if job_info.get("company"):
-            entry["company"] = job_info["company"]
+            entry["company"] = job_info.get("company") or entry["company"]
+            print(f"Retry lookup for {job_id} succeeded - now '{entry['title']}' @ '{entry['company']}'")
+        else:
+            print(f"Retry lookup for {job_id} still found nothing in {EXPORT_FILE.name}")
 
     entry["status"] = action
     entry[f"date_{action}"] = datetime.now(timezone.utc).date().isoformat()
