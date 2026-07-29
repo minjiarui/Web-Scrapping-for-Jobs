@@ -77,11 +77,23 @@ def find_job_in_export(job_id: str) -> dict:
     tracked job doesn't need you to type that info in by hand."""
     if not EXPORT_FILE.exists():
         return {}
+
+    target = job_id.strip()
+    numeric_part = target.lstrip("-")
+    close_matches = []
+
     with open(EXPORT_FILE, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row.get("job_id") == job_id:
+            candidate = row.get("job_id") or ""
+            if candidate.strip() == target:
                 return {"title": row.get("title", ""), "company": row.get("company", "")}
+            if numeric_part and numeric_part in candidate:
+                close_matches.append(candidate)
+
+    print(f"DEBUG: no exact match for job_id={job_id!r} (len={len(job_id)})")
+    if close_matches:
+        print(f"DEBUG: found {len(close_matches)} similar-looking row(s) that did NOT match exactly: {[repr(c) for c in close_matches[:3]]}")
     return {}
 
 
