@@ -16,5 +16,14 @@
     "date_rejected": null,
     "status": "offer",
     "title": "Unknown title"
+  },
+  "jooble_-66551424290500092": {
+    "company": "Unknown company",
+    "date_applied": "2026-08-01",
+    "date_interview": null,
+    "date_offer": null,
+    "date_rejected": null,
+    "status": "applied",
+    "title": "Unknown title"
   }
 }
