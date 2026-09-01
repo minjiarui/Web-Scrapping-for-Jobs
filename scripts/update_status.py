@@ -84,6 +84,10 @@ def find_job_in_export(job_id: str) -> dict:
 
     with open(EXPORT_FILE, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
+        if not reader.fieldnames or "job_id" not in reader.fieldnames:
+            print(f"ERROR: {EXPORT_FILE.name} has no valid header row "
+                  f"(fieldnames={reader.fieldnames!r}) - lookup cannot work")
+            return {}
         for row in reader:
             candidate = row.get("job_id") or ""
             if candidate.strip() == target:
