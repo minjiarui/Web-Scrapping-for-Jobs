@@ -370,6 +370,11 @@ def load_exported_job_ids() -> set:
         return set()
     with open(EXPORT_FILE, "r", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
+        if not reader.fieldnames or "job_id" not in reader.fieldnames:
+            raise RuntimeError(
+                f"{EXPORT_FILE.name} has no valid header row - refusing to run, "
+                f"as every job would be treated as new and re-appended."
+            )
         return {row["job_id"] for row in reader if row.get("job_id")}
 
 
