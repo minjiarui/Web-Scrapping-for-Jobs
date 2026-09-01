@@ -752,7 +752,11 @@ check whether it actually needs more experience than a 4-month internship
 whether the core required skills don't really match.
 
 Respond with ONLY a JSON object, no other text, no markdown formatting:
-{{"fit": "good" or "poor", "note": "1-2 short direct sentences explaining why"}}"""
+{{"fit": "good" or "poor",
+  "score": integer 1-5 where 5 is an excellent fit,
+  "pro": "strongest reason it fits - max 12 words, a fragment not a sentence, do not repeat the job title",
+  "con": "main reservation - max 12 words, a fragment not a sentence",
+  "note": "1-2 short direct sentences explaining the overall verdict"}}"""
 
     try:
         resp = requests.post(
@@ -764,7 +768,7 @@ Respond with ONLY a JSON object, no other text, no markdown formatting:
             },
             json={
                 "model": ANTHROPIC_MODEL,
-                "max_tokens": 150,
+                "max_tokens": 300,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=30,
@@ -779,51 +783,110 @@ Respond with ONLY a JSON object, no other text, no markdown formatting:
         parsed = json.loads(raw_text)
         if parsed.get("fit") not in ("good", "poor") or not parsed.get("note"):
             return None
+        # Enforce the length limits in code as well as in the prompt - the
+        # model will occasionally ignore "max 12 words" and write a sentence,
+        # which is exactly what made the old messages so chunky.
+        parsed["score"] = _clamp_score(parsed.get("score"))
+        parsed["pro"] = _clip_words(parsed.get("pro"))
+        parsed["con"] = _clip_words(parsed.get("con"))
         return parsed
     except (requests.RequestException, json.JSONDecodeError) as e:
         print(f"WARNING: Anthropic API call/parse failed: {e}")
         return None
 
 
-def format_job_message(job: dict) -> str:
-    raw_title = job.get("title", "Untitled role").strip()
-    raw_company = job.get("company", {}).get("display_name", "Unknown company")
-    title = html.escape(raw_title)
-    company = html.escape(raw_company)
-    location = html.escape(job.get("location", {}).get("display_name", "Location not specified"))
+def _clip_words(text, max_words: int = 12) -> str:
+    """Truncates a fit fragment to a fixed word count so one verbose reply
+    can't blow out the message layout."""
+    if not text:
+        return ""
+    words = str(text).strip().rstrip(".").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]) + "…"
+
+
+def _clamp_score(value) -> int:
+    """Coerces whatever the model returned into a 1-5 integer, defaulting to
+    the middle of the range if it sent something unusable."""
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return 3
+    return min(5, max(1, score))
+
+
+def format_score_meter(score) -> str:
+    """Renders the 1-5 fit score as a small bar - scannable at a glance in a
+    way a paragraph of reasoning is not."""
+    if score is None:
+        return ""
+    score = _clamp_score(score)
+    return "🟩" * score + "⬜" * (5 - score)
+
+
+def _short_date(iso_date: str) -> str:
+    """2026-08-30 -> 30 Aug, so the posting date can share a line with the
+    company and location instead of taking one of its own."""
+    try:
+        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%-d %b")
+    except (ValueError, TypeError):
+        return iso_date or ""
+
+
+def format_job_message(job: dict, position: int = None, total: int = None) -> str:
+    title = html.escape(job.get("title", "Untitled role").strip())
+    company = html.escape(job.get("company", {}).get("display_name", "Unknown company"))
+    location = html.escape(job.get("location", {}).get("display_name", ""))
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
-    url = job.get("redirect_url", "")
     created = job.get("created", "")[:10]
+
+    # Line 1 - rank restores the "top N" ordering that was invisible once
+    # each job started arriving as its own separate message.
+    counter = f"{position}/{total} · " if position and total else ""
+    header = f"📋 <b>{counter}{title}</b>"
+
+    # Line 2 - company, location and date used to occupy three lines with an
+    # emoji each; none of them needs its own row.
+    meta_line = " · ".join(bit for bit in (company, location, _short_date(created)) if bit)
+
+    matched_queries = job.get("_matched_queries", [])
+    primary_tag = QUERY_TAGS.get(matched_queries[0], matched_queries[0]) if matched_queries else ""
+    meter = format_score_meter(job.get("_ai_score"))
+    score_bits = [bit for bit in (meter, primary_tag) if bit]
+    score_line = "\n" + "  ".join(score_bits) if score_bits else ""
 
     salary_line = ""
     if salary_min and salary_max:
         salary_line = f"\n💰 {salary_min:,.0f} - {salary_max:,.0f}"
 
-    matched_queries = job.get("_matched_queries", [])
-    primary_tag = QUERY_TAGS.get(matched_queries[0], matched_queries[0]) if matched_queries else ""
-    tag_line = f"{primary_tag}\n" if primary_tag else ""
-
-    matched_keywords = job.get("_matched_keywords", [])
+    # Single-character matches like "r" read as a bug rather than a signal,
+    # so drop them and skip the line entirely if nothing survives.
+    matched_keywords = [kw for kw in job.get("_matched_keywords", []) if len(kw) > 1]
     match_line = ""
     if matched_keywords:
-        shown = ", ".join(matched_keywords[:4])
-        match_line = f"\n🎯 Matches your skills: {html.escape(shown)}"
+        match_line = f"\n🎯 {html.escape(', '.join(matched_keywords[:3]))}"
 
+    verdict_lines = ""
+    if job.get("_ai_pro"):
+        verdict_lines += f"\n✅ {html.escape(job['_ai_pro'])}"
+    if job.get("_ai_con"):
+        verdict_lines += f"\n⚠️ {html.escape(job['_ai_con'])}"
+
+    # Full reasoning stays available but renders collapsed to ~3 lines until
+    # tapped, instead of dominating the message.
     ai_note = job.get("_ai_note")
-    ai_note_line = f"\n🤖 {html.escape(ai_note)}" if ai_note else ""
-
-    search_query = quote_plus(f"{raw_title} {raw_company} Singapore")
-    google_search_url = f"https://www.google.com/search?q={search_query}"
+    note_block = ""
+    if ai_note:
+        note_block = f"\n<blockquote expandable>🤖 {html.escape(ai_note)}</blockquote>"
 
     return (
-        f"{tag_line}"
-        f"📋 <b>{title}</b>\n"
-        f"🏢 {company}\n"
-        f"📍 {location}{salary_line}{match_line}{ai_note_line}\n"
-        f"🗓 Posted: {created}\n"
-        f'🔗 <a href="{url}">Apply here</a>\n'
-        f'🔎 <a href="{google_search_url}">Search on Google</a>'
+        f"{header}\n"
+        f"{meta_line}"
+        f"{score_line}{salary_line}{match_line}"
+        f"{verdict_lines}"
+        f"{note_block}"
     )
 
 
@@ -867,17 +930,25 @@ def send_telegram_message(text: str, disable_preview: bool = True, reply_markup:
     return True
 
 
-def build_apply_keyboard(job_id: str) -> dict:
+def build_apply_keyboard(job_id: str, apply_url: str = None, google_url: str = None) -> dict:
     """Inline button shown under each digest message - lets you mark a job
     as applied with a single tap instead of typing a command. Tapping it
     fires a callback_query Telegram update, which the Cloudflare Worker
     routes to the "Telegram Status Update" workflow (see
     scripts/update_status.py)."""
-    return {
-        "inline_keyboard": [[
-            {"text": "✅ Mark Applied", "callback_data": f"applied:{job_id}"}
-        ]]
-    }
+    # Telegram rejects the whole sendMessage call if a url button has an
+    # invalid url, so anything that isn't clearly http(s) is simply omitted.
+    link_row = []
+    if apply_url and str(apply_url).startswith("http"):
+        link_row.append({"text": "🔗 Apply", "url": apply_url})
+    if google_url and str(google_url).startswith("http"):
+        link_row.append({"text": "🔎 Google", "url": google_url})
+
+    rows = []
+    if link_row:
+        rows.append(link_row)
+    rows.append([{"text": "✅ Mark Applied", "callback_data": f"applied:{job_id}"}])
+    return {"inline_keyboard": rows}
 
 
 def run_job_check(triggered_by_refresh: bool = False):
@@ -978,6 +1049,9 @@ def run_job_check(triggered_by_refresh: bool = False):
                 confirmed_jobs.append(job)
                 continue
             job["_ai_note"] = verdict["note"]
+            job["_ai_score"] = verdict.get("score")
+            job["_ai_pro"] = verdict.get("pro")
+            job["_ai_con"] = verdict.get("con")
             if verdict["fit"] == "poor":
                 print(f"AI check flagged '{job.get('title')}' as a poor fit - dropping and backfilling")
                 seen_ids.add(str(job.get("id")))
@@ -1021,10 +1095,18 @@ def run_job_check(triggered_by_refresh: bool = False):
         )
 
     sent_count = 0
-    for job in top_jobs:
+    total_jobs = len(top_jobs)
+    for position, job in enumerate(top_jobs, start=1):
         job_id = str(job.get("id"))
-        text = format_job_message(job)
-        keyboard = build_apply_keyboard(job_id)
+        text = format_job_message(job, position=position, total=total_jobs)
+        search_query = quote_plus(
+            f"{job.get('title', '')} {job.get('company', {}).get('display_name', '')} Singapore"
+        )
+        keyboard = build_apply_keyboard(
+            job_id,
+            apply_url=job.get("redirect_url"),
+            google_url=f"https://www.google.com/search?q={search_query}",
+        )
         if send_telegram_message(text, reply_markup=keyboard):
             seen_ids.add(job_id)
             sent_count += 1
